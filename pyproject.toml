@@ -1,0 +1,44 @@
+# pyproject.toml
+
+# 1. Метаданные проекта
+[project]
+name = "site-scout"                  # Уникальное название пакета
+version = "0.1.0"                    # Начальная версия
+description = "Асинхронный веб-сканер SiteScout для сбора структуры, документов и локалей сайта"
+authors = [ { name = "Ваше Имя", email = "you@example.com" } ]  # Автор(ы) проекта
+readme = "README.md"                 # Файл с подробным описанием
+license = { text = "MIT" }           # Лицензия проекта
+keywords = ["web", "crawler", "scraper", "asyncio", "site-scout"]
+
+# Совместимость с Python 3.11 и выше
+requires-python = ">=3.11"
+
+# 2. Зависимости
+# Используем PEP 621: dependencies перечислены здесь, но будут синхронизированы с requirements.txt
+# Для setuptools: [project.optional-dependencies]
+dependencies = [  
+    # HTTP и парсеры
+    "aiohttp>=3.8.1",
+    "beautifulsoup4>=4.11.1",
+    "lxml>=4.9.1",
+    "jinja2>=3.1.2",
+    "pydantic>=2.0.0",
+    # CLI и логирование
+    "click>=8.1.3",
+    "structlog>=22.3.0",
+    # YAML
+    "pyyaml>=6.0"
+]
+
+# 3. Сборка и инструменты
+[build-system]
+requires = ["setuptools>=65.0.0", "wheel"]  # Инструменты для сборки пакета
+build-backend = "setuptools.build_meta"
+
+# 4. Маппинг зависимостей из requirements.txt (опционально, при использовании докер/CI)
+
+# Для автогенерации requirements.txt можно использовать pip-tools или poetry export.
+# Здесь мы просто упоминаем, что requirements.txt содержит идентичный список.
+
+# EOF
+

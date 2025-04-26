@@ -1,0 +1,47 @@
+```yaml
+# configs/default.yaml
+
+# 1. Базовый URL для сканирования
+#    Этот URL станет отправной точкой для краулинга сайта.
+base_url: "https://example.com"
+
+# 2. Максимальная глубина обхода
+#    Определяет, насколько глубоко (сколько ссылок по цепочке) сканер будет переходить.
+max_depth: 2
+
+# 3. Параметры асинхронных HTTP-запросов
+#    timeout: общий таймаут на выполнение запроса (в секундах).
+#    rate_limit: максимальное число одновременных запросов (requests per second).
+#    user_agent: строка User-Agent, указанная в заголовках.
+timeout: 10.0       # секунды ожидания ответа
+rate_limit: 2.0     # запросов в секунду
+user_agent: "SiteScoutBot/1.0"
+
+# 4. Пути к словарям для brute-force сканирования
+#    paths: список директорий (admin, login и др.)
+#    files: список имён файлов (secret.pdf, backup.zip и др.)
+wordlists:
+  paths: "wordlists/paths.txt"   # файл со словами для директорий
+  files: "wordlists/files.txt"   # файл со словами для файлов
+
+# 5. Настройки локализации (для национальных сегментов)
+#    Можно определить дополнительные пути или атрибуты для каждой локали.
+#    По умолчанию используется built-in набор поддоменов и префиксов.
+localization:
+  jp:
+    subdomain: "jp."           # национальный поддомен для Японии
+    path_prefix: "/jp"        # префикс пути для Японской версии
+    hreflangs: ["ja", "ja-JP"]
+    accept_languages: ["ja", "ja-JP"]
+  kr:
+    subdomain: "kr."           # поддомен для Кореи
+    path_prefix: "/kr"
+    hreflangs: ["ko", "ko-KR"]
+    accept_languages: ["ko", "ko-KR"]
+  cn:
+    subdomain: "cn."           # поддомен для Китая
+    path_prefix: "/cn"
+    hreflangs: ["zh", "zh-CN"]
+    accept_languages: ["zh", "zh-CN"]
+```
+
