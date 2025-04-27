@@ -1,163 +1,150 @@
-# site_scout/engine.py
+# === FILE: site_scout_project/site_scout/engine.py ===
+"""SiteScout Engine – orchestrates the whole scanning pipeline.
 
+Changes vs. previous version
+----------------------------
+* Uses `async with AsyncCrawler(...)` so that HTTP session is properly
+  initialised and closed.
+* Public `crawler.fetch_page()` helper (alias to internal fetch) keeps engine
+  decoupled from crawler internals.
+* Signal handling wrapped in *try/except NotImplementedError* for Windows and
+  sub‑threads (`loop.add_signal_handler` not supported).
+* Logging is configured **once** at start‑up; workers reuse the same logger.
 """
-Оркестратор (Engine) проекта SiteScout.
+from __future__ import annotations
 
-Задачи модуля:
-- Инициализация и управление asyncio-очередью URL для сканирования.
-- Запуск и контроль асинхронных воркеров:
-  - Crawler-корутин (сбор страниц и HTTP-данных)
-  - Parser-корутин (разбор HTML/robots/sitemap)
-  - DocFinder-корутин (поиск документов)
-  - BruteForce-корутин (скрытые пути)
-- Сбор сырых результатов от воркеров.
-- Graceful shutdown (остановка воркеров по сигналу).
-- Передача всех результатов в агрегатор для финального отчёта.
-"""
 import asyncio
 import signal
-from typing import List, Any
+from typing import Any, List
 
+from site_scout.aggregator import aggregate_results
+from site_scout.bruteforce.brute_force import BruteForcer
 from site_scout.config import ScannerConfig
-from site_scout.logger import init_logging
 from site_scout.crawler.crawler import AsyncCrawler
+from site_scout.logger import init_logging
 from site_scout.parser.html_parser import parse_html
 from site_scout.doc_finder import find_documents
-from site_scout.bruteforce.brute_force import BruteForcer
-from site_scout.aggregator import aggregate_results
 
-# Количество параллельных воркеров (можно вынести в конфиг)
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
 DEFAULT_WORKERS = 5
 
+# ---------------------------------------------------------------------------
+# Worker coroutine
+# ---------------------------------------------------------------------------
 
-async def worker(
+
+async def _worker(
     name: str,
-    queue: asyncio.Queue,
+    queue: "asyncio.Queue[str]",
     results: List[Any],
-    config: ScannerConfig,
     crawler: AsyncCrawler,
-    bruteforcer: BruteForcer
-):
-    """
-    Асинхронный воркер, который:
-    1. Получает URL из очереди.
-    2. Скачивает страницу (crawler.fetch_page).
-    3. Парсит HTML (parse_html).
-    4. Находит документы (find_documents).
-    5. Производит brute-force (bruteforcer.scan_paths).
-    6. Сохраняет результаты в общий список.
-    7. Повторяет, пока не получит sentinel (None).
-
-    :param name: имя воркера для логов
-    :param queue: очередь URL для обработки
-    :param results: общий список для хранения результатов
-    :param config: настройки сканера
-    :param crawler: экземпляр AsyncCrawler
-    :param bruteforcer: экземпляр BruteForcer
-    """
+    bruteforcer: BruteForcer,
+) -> None:
     logger = init_logging()
     while True:
         url = await queue.get()
-        if url is None:
-            # Sentinel: сигнал завершения
+        if url is None:  # sentinel for graceful shutdown
             queue.task_done()
             break
 
-        logger.debug(f"[{name}] Обработка URL: {url}")
+        logger.debug("[%s] Обработка URL: %s", name, url)
         try:
-            # 1) Скачать страницу
-            page_data = await crawler.fetch_page(url)
-            # 2) Распарсить HTML
-            parsed = parse_html(page_data)
-            # 3) Найти документы
+            # 1) Download page
+            page = await crawler.fetch_page(url)
+            if not page:
+                continue
+
+            # 2) Parse html
+            parsed = parse_html(page)
+
+            # 3) Find documents
             docs = await find_documents(parsed)
-            # 4) Brute-force скрытых путей
+
+            # 4) Hidden paths brute-force
             hidden = await bruteforcer.scan_paths(url)
-            # Сохранить результат
-            results.append({
-                'url': url,
-                'parsed': parsed,
-                'documents': docs,
-                'hidden_paths': hidden
-            })
-        except Exception as e:
-            logger.error(f"[{name}] Ошибка обработки {url}: {e}")
+
+            results.append(
+                {
+                    "url": url,
+                    "parsed": parsed,
+                    "documents": docs,
+                    "hidden_paths": hidden,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[%s] Ошибка обработки %s: %s", name, url, exc)
         finally:
             queue.task_done()
 
 
-async def start_scan(config: ScannerConfig) -> Any:
-    """
-    Основная точка входа для запуска сканирования.
+# ---------------------------------------------------------------------------
+# Engine entrypoint
+# ---------------------------------------------------------------------------
 
-    Шаги:
-    1. Инициализировать логгер.
-    2. Подготовить очередь и seed-URL.
-    3. Создать экземпляры AsyncCrawler и BruteForcer.
-    4. Запустить воркеры.
-    5. Подождать завершения очереди.
-    6. Graceful shutdown воркеров через sentinel.
-    7. Собрать результаты и передать в агрегатор.
 
-    :param config: объект ScannerConfig с настройками
-    :return: объект с агрегированными результатами (ScanReport)
-    """
-    # Инициализируем логгер
+async def start_scan(config: ScannerConfig) -> Any:  # noqa: C901 (orchestrator)
+    """Run full site scan and return aggregated report."""
+
     logger = init_logging()
     logger.info("Запуск SiteScout Engine")
 
-    # Создаём очередь URL
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue[str] = asyncio.Queue()
     results: List[Any] = []
 
-    # Инициализируем компоненты
-    crawler = AsyncCrawler(config)
-    bruteforcer = BruteForcer(config)
-
-    # Добавляем стартовый URL
+    # Seed URL
     await queue.put(config.base_url)
 
-    # Запускаем воркеры
-    workers = []
-    for i in range(DEFAULT_WORKERS):
-        name = f"worker-{i+1}"
-        task = asyncio.create_task(
-            worker(name, queue, results, config, crawler, bruteforcer)
+    async with AsyncCrawler(config) as crawler:
+        bruteforcer = BruteForcer(config)
+
+        # Worker pool
+        workers = [
+            asyncio.create_task(
+                _worker(f"worker-{i+1}", queue, results, crawler, bruteforcer)
+            )
+            for i in range(DEFAULT_WORKERS)
+        ]
+
+        # Graceful shutdown on signals (works on UNIX main thread)
+        stop_event = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+            except (NotImplementedError, RuntimeError):
+                # Not available on Windows or non‑main thread – ignore
+                pass
+
+        # Wait until queue is empty or user interrupts
+        await asyncio.wait(
+            [queue.join(), stop_event.wait()],
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        workers.append(task)
 
-    # Обработчик SIGINT/SIGTERM для graceful shutdown
-    loop = asyncio.get_running_loop()
-    stop = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+        # Drain – send sentinel to workers
+        for _ in workers:
+            await queue.put(None)
+        await asyncio.gather(*workers)
 
-    # Ожидаем завершения очереди или сигнала
-    await queue.join()
-    logger.info("Очередь пустая, отправляем сигналы завершения воркерам...")
-
-    # Посылаем sentinel (None) каждому воркеру
-    for _ in workers:
-        await queue.put(None)
-
-    # Ждём завершения воркеров
-    await asyncio.gather(*workers)
-    logger.info("Все воркеры завершены")
-
-    # Агрегация результатов
     report = aggregate_results(results)
-    logger.info("Сканирование завершено, результаты агрегированы")
+    logger.info("Сканирование завершено, результатов: %d", len(results))
     return report
 
 
-# Пример запуска модуля напрямую
-if __name__ == "__main__":
+# ---------------------------------------------------------------------------
+# Script mode
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":  # pragma: no cover
     import sys
+
     from site_scout.config import load_config
 
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "configs/default.yaml"
-    config = load_config(config_path)
+    cfg_path = sys.argv[1] if len(sys.argv) > 1 else None
+    cfg = load_config(cfg_path)
 
-    # Запускаем сканирование
-    scan_report = asyncio.run(start_scan(config))
-    print(scan_report)  # или сохранить отчёт в файл
+    summary = asyncio.run(start_scan(cfg))
+    print(summary)

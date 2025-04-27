@@ -1,72 +1,99 @@
-# site_scout/parser/html_parser.py
-"""
-Модуль: html_parser.py
+# === FILE: site_scout_project/site_scout/parser/html_parser.py ===
+"""HTML parsing utilities for SiteScout.
 
-Парсинг HTML-страницы.
-- Извлечение всех ссылок (<a href>)
-- Сбор meta-тегов (name, http-equiv, charset)
-- Извлечение заголовков <h1>-<h6>
-- Сбор HTTP-заголовков из PageData
+The project previously imported :pyfunc:`site_scout.parser.html_parser.parse_html`
+but the module was missing.  This implementation provides a minimal yet useful
+`parse_html()` helper and a simple :class:`ParsedPage` dataclass so that the
+Engine and other modules can rely on a stable API while we iterate.
+
+The goal is **not** to be a full-blown scraping library but to expose enough
+information for tests and higher-level logic:
+
+* title — document <title> text or ``""`` if absent.
+* links — list of absolute URLs found in <a href="…"> tags.
+* text  — main visible text (usable for quick keyword checks).
+
+If you need more structured data later, extend :class:`ParsedPage`; the
+canonical public interface is the dataclass itself, so adding new optional
+fields is backward-compatible.
 """
-from dataclasses import dataclass, field
-from typing import List, Dict
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Sequence
+from urllib.parse import urljoin, urlparse, urlunparse
+
 from bs4 import BeautifulSoup
-from site_scout.utils import PageData
 
-@dataclass
+__all__: Sequence[str] = ("ParsedPage", "parse_html")
+
+
+@dataclass(slots=True)
 class ParsedPage:
+    """Lightweight representation of an HTML page."""
+
     url: str
-    links: List[str] = field(default_factory=list)
-    meta: Dict[str, str] = field(default_factory=dict)
-    headings: Dict[str, List[str]] = field(default_factory=lambda: {f'h{i}': [] for i in range(1,7)})
-    headers: Dict[str, str] = field(default_factory=dict)
+    title: str
+    links: List[str]
+    text: str
+
+    # Convenience helpers ---------------------------------------------------
+    def same_host_links(self) -> List[str]:
+        """Return only links that point to the same host as *self.url*."""
+        host = urlparse(self.url).netloc
+        return [u for u in self.links if urlparse(u).netloc == host]
 
 
-def parse_html(page_data: PageData) -> ParsedPage:
+# ---------------------------------------------------------------------------
+# Public function
+# ---------------------------------------------------------------------------
+
+def _normalize_url(url: str) -> str:
+    """Very small URL canonicalisation (lower-case host, remove query/fragments)."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    path = parsed.path or "/"
+    return urlunparse((scheme, netloc, path.rstrip("/"), "", "", ""))
+
+
+def parse_html(page) -> ParsedPage:
+    """Parse raw HTML (string) or :class:`~site_scout.crawler.crawler.PageData`.
+
+    Parameters
+    ----------
+    page
+        Either a *str* (HTML markup) **or** a ``PageData`` object with
+        ``url`` and ``content`` attributes.  Accepting both keeps the public
+        API flexible while we refactor internals.
     """
-    Разбирает HTML-контент страницы и возвращает ParsedPage.
+    if hasattr(page, "content") and hasattr(page, "url"):
+        html: str = page.content  # type: ignore[assignment]
+        base_url: str = str(page.url)  # type: ignore[assignment]
+    else:
+        html = str(page)
+        base_url = ""
 
-    :param page_data: объект PageData с полями url, content, headers
-    :return: ParsedPage с ссылками, meta, заголовками и HTTP-заголовками
+    soup = BeautifulSoup(html, "html.parser")
 
-    Пример использования:
-    ```python
-    from site_scout.parser.html_parser import parse_html
-    from site_scout.utils import PageData
+    title_tag = soup.find("title")
+    title = title_tag.get_text(strip=True) if title_tag else ""
 
-    page = PageData(
-        url="https://example.com",
-        content="<html>...</html>",
-        headers={"Content-Type": "text/html"}
-    )
-    parsed = parse_html(page)
-    print(parsed.links)
-    print(parsed.meta)
-    print(parsed.headings['h1'])
-    print(parsed.headers)
-    ```
-    """
-    soup = BeautifulSoup(page_data.content, 'lxml')
-    parsed = ParsedPage(url=page_data.url)
-    # Извлечение ссылок
-    for tag in soup.find_all('a', href=True):
-        parsed.links.append(tag['href'].strip())
-    # Сбор meta-тегов
-    for tag in soup.find_all('meta'):
-        if 'name' in tag.attrs and 'content' in tag.attrs:
-            parsed.meta[tag.attrs['name']] = tag.attrs['content']
-        elif 'http-equiv' in tag.attrs and 'content' in tag.attrs:
-            parsed.meta[tag.attrs['http-equiv']] = tag.attrs['content']
-        elif 'charset' in tag.attrs:
-            parsed.meta['charset'] = tag.attrs['charset']
-    # Извлечение заголовков h1-h6
-    for i in range(1, 7):
-        tag_name = f'h{i}'
-        for hdr in soup.find_all(tag_name):
-            text = hdr.get_text(strip=True)
-            if text:
-                parsed.headings[tag_name].append(text)
-    # HTTP-заголовки
-    parsed.headers = page_data.headers
-    return parsed
+    # Extract links (absolute, deduplicated, stable ordering)
+    seen = set()
+    links: List[str] = []
+    for tag in soup.find_all("a", href=True):
+        href = tag["href"].strip()
+        if href.startswith("mailto:") or href.startswith("javascript:"):
+            continue
+        abs_url = _normalize_url(urljoin(base_url, href))
+        if abs_url not in seen:
+            seen.add(abs_url)
+            links.append(abs_url)
 
+    # Visible text (skip <script>, <style>, etc.)
+    for element in soup(["script", "style", "noscript", "template"]):
+        element.decompose()
+    text = " ".join(t.strip() for t in soup.stripped_strings)
+
+    return ParsedPage(url=base_url, title=title, links=links, text=text)

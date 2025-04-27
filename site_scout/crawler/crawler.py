@@ -1,12 +1,22 @@
-# === FILE: site_scout/crawler/crawler.py
-# Модуль асинхронного краулинга для проекта SiteScout.
-# Поддержка:
-#   • корректного robots.txt (Allow/Disallow/Crawl-delay, порядок правил);
-#   • глобального rate-limit/token-bucket;
-#   • retry с экспоненциальным back-off и настраиваемым списком кодов;
-#   • таймаутов, конкурентности, прогресса через logging;
-#   • PEP-8 и сохранения прежнего публичного API.
+# === FILE: site_scout_project/site_scout/crawler/crawler.py ===
+"""Asynchronous crawler core for SiteScout.
 
+Key improvements over the previous revision
+-------------------------------------------
+* **Robots.txt** – longest‑path match per RFC 9309, directive precedence
+  implemented without order‑dependence.
+* **Rate‑limit** – timestamp is advanced *before* releasing the lock, so
+  concurrent workers never read a stale `_last_request_ts`.
+* **URL normalisation** – trailing slash is removed **except** for the root
+  path (`/`), eliminating duplicate representations of the homepage.
+* **Configuration** – relies on `ScannerConfig` (no run‑time `setattr`).
+  Validation merely checks presence; default values are now supplied by the
+  Pydantic model.
+* **Windows signals** – `add_signal_handler` wrapped in a guard (in `engine`,
+  not shown here).
+
+Public API (`PageData`, `AsyncCrawler`) is preserved.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -19,26 +29,31 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
 
-__all__ = ("PageData", "AsyncCrawler", "RobotsTxtRules")
+__all__: Sequence[str] = ("PageData", "AsyncCrawler", "RobotsTxtRules")
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class PageData:
-    """Хранит URL и контент загруженной страницы."""
+    """Simple container with fetched *url* and raw HTML *content*."""
+
     url: str
     content: str
 
 
-class RobotsTxtRules:
-    """
-    Разбирает robots.txt и применяет правила:
-    • поддержка Disallow/Allow (последнее совпадение побеждает);
-    • директива Crawl-delay хранится отдельно для каждой группы.
-    Алгоритм совместим со спецификацией
-    https://www.rfc-editor.org/rfc/rfc9309#section-2
-    """
+# ---------------------------------------------------------------------------
+# Robots.txt handling
+# ---------------------------------------------------------------------------
 
-    _Directive = Tuple[str, str]  # ('allow'|'disallow', path)
+
+class RobotsTxtRules:
+    """Parse and evaluate robots.txt rules (RFC 9309)."""
+
+    _Directive = Tuple[str, str]  # ("allow" | "disallow", path)
 
     def __init__(self, text: str) -> None:
         self._groups: List[Dict[str, object]] = []
@@ -46,37 +61,35 @@ class RobotsTxtRules:
 
     # -------------------------- public API --------------------------
 
-    def can_fetch(self, user_agent: str, path: str) -> bool:
-        """Возвращает True, если `user_agent` может скачать `path`."""
+    def can_fetch(self, user_agent: str, path: str) -> bool:  # noqa: D401
+        """Return *True* if *user_agent* may fetch *path*."""
         group = self._match_group(user_agent)
         if group is None:
-            # Группа не найдена → разрешено.
-            return True
+            return True  # no rules ⇒ allowed
 
-        allow = True
+        # Pick directive with **longest matching path** (RFC 9309 §2.2.3).
+        best_len = -1
+        allow = True  # default when nothing matches
         for directive, rule_path in group["directives"]:  # type: ignore[index]
-            if not rule_path:
-                # Пустое значение Disallow/Allow не влияет.
-                continue
-            if path.startswith(rule_path):
-                allow = directive == "allow"
+            if rule_path and path.startswith(rule_path):
+                if len(rule_path) > best_len:
+                    best_len = len(rule_path)
+                    allow = directive == "allow"
         return allow
 
     def crawl_delay(self, user_agent: str) -> Optional[float]:
-        """Директива Crawl-delay для указанного User-Agent."""
+        """Return *Crawl-delay* for *user_agent* if specified."""
         group = self._match_group(user_agent)
         return None if group is None else group["crawl_delay"]  # type: ignore[index]
 
     # ------------------------- internal -----------------------------
 
-    def _parse(self, text: str) -> None:
+    def _parse(self, text: str) -> None:  # noqa: C901 (complexity acceptable)
         current: Optional[Dict[str, object]] = None
-
         for raw in text.splitlines():
-            line = raw.split("#", 1)[0].strip()  # убираем комментарии
+            line = raw.split("#", 1)[0].strip()  # strip comments
             if not line:
                 continue
-
             key, _, value = line.partition(":")
             key = key.lower().strip()
             value = value.strip()
@@ -85,14 +98,16 @@ class RobotsTxtRules:
                 if (
                     current is None
                     or current["agents"]  # type: ignore[index]
-                    and (current["directives"] or current["crawl_delay"] is not None)  # type: ignore[index]
+                    and (
+                        current["directives"]  # type: ignore[index]
+                        or current["crawl_delay"] is not None  # type: ignore[index]
+                    )
                 ):
-                    # Начинаем новую группу.
                     current = {"agents": [], "directives": [], "crawl_delay": None}
                     self._groups.append(current)
                 current["agents"].append(value.lower())  # type: ignore[index]
 
-            elif key in ("allow", "disallow"):
+            elif key in {"allow", "disallow"}:
                 if current is None:
                     current = {"agents": ["*"], "directives": [], "crawl_delay": None}
                     self._groups.append(current)
@@ -105,15 +120,16 @@ class RobotsTxtRules:
                 try:
                     current["crawl_delay"] = float(value)  # type: ignore[index]
                 except ValueError:
-                    continue  # игнорируем неверное значение
+                    continue  # ignore invalid value
+
+    # ---------- group / UA matching (RFC 9309 §2.2.2) ---------------
 
     def _match_group(self, user_agent: str) -> Optional[Dict[str, object]]:
-        """Выбираем первую подходящую группу (RFC 9309, §2.2)."""
         ua = user_agent.lower()
         for group in self._groups:
             if any(self._ua_match(ua, agent) for agent in group["agents"]):  # type: ignore[index]
                 return group
-        # Фолбек - ищем группу с '*'
+        # Fallback ‑ group containing "*"
         for group in self._groups:
             if "*" in group["agents"]:  # type: ignore[index]
                 return group
@@ -122,44 +138,48 @@ class RobotsTxtRules:
     @staticmethod
     def _ua_match(ua: str, pattern: str) -> bool:
         pattern = pattern.lower()
-        if pattern == "*":
-            return True
-        return ua.startswith(pattern)
+        return True if pattern == "*" else ua.startswith(pattern)
+
+
+# ---------------------------------------------------------------------------
+# Async crawler
+# ---------------------------------------------------------------------------
 
 
 class AsyncCrawler:
-    """
-    Асинхронный краулер.
-    Публичный интерфейс не изменён: `crawl()` отдаёт List[PageData].
+    """High‑level asynchronous crawler.
+
+    Parameters
+    ----------
+    config : ScannerConfig
+        Validated configuration object.
     """
 
     _RETRY_STATUS: Sequence[int] = tuple(range(500, 600)) + (429,)
 
-    def __init__(self, config) -> None:
+    def __init__(self, config) -> None:  # keep positional for backward compat
         self.config = config
         self._validate_config()
 
+        # Runtime state
         self.visited: Set[str] = set()
         self.disallowed_pages: List[str] = []
-
         self.session: Optional[ClientSession] = None
         self.logger = logging.getLogger("SiteScout")
 
-        # Rate-limit.
+        # Concurrency & rate‑limit
+        self._sem = asyncio.Semaphore(self.config.concurrency)
+        self.rate_limit = float(self.config.rate_limit)
         self._rate_lock = asyncio.Lock()
         self._last_request_ts = 0.0
-        self.rate_limit = max(1.0, float(self.config.rate_limit))
 
-        # Concurrency semaphore.
-        self._sem = asyncio.Semaphore(int(self.config.concurrency))
+        # Retries
+        self.retry_times: int = self.config.retry_times
 
-        # Retry.
-        self.retry_times: int = max(0, int(getattr(self.config, "retry_times", 0)))
-
-        # Robots.
+        # Robots
         self.robots_rules: Optional[RobotsTxtRules] = None
 
-    # -------------------------- context -----------------------------
+    # -------------------------- context manager ----------------------------
 
     async def __aenter__(self) -> "AsyncCrawler":
         timeout = ClientTimeout(total=self.config.timeout)
@@ -171,32 +191,25 @@ class AsyncCrawler:
         await self._load_robots()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:  # noqa: D401
         if self.session and not self.session.closed:
             await self.session.close()
 
-    # -------------------------- public ------------------------------
+    # ------------------------------ public --------------------------------
 
     async def crawl(self) -> List[PageData]:
-        """
-        Запускает обход сайта, ограниченный `config.max_depth`
-        и (необязательным) `config.max_pages`.
-        """
+        """Breadth‑first crawl adhering to depth & page limits."""
         self.logger.info("Старт обхода: %s", self.config.base_url)
-
         start_time = time.monotonic()
-        queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
 
+        queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
         root = self._normalize_url(str(self.config.base_url))
         self.visited.add(root)
         await queue.put((root, 0))
 
-        max_pages = getattr(self.config, "max_pages", 5000)
         results: List[PageData] = []
-
-        # Запускаем воркеры.
         workers = [
-            asyncio.create_task(self._worker(queue, results, max_pages))
+            asyncio.create_task(self._worker(queue, results))
             for _ in range(self.config.concurrency)
         ]
 
@@ -213,26 +226,22 @@ class AsyncCrawler:
             len(results) / total if total else 0.0,
         )
         if self.disallowed_pages:
-            self.logger.info(
-                "Заблокировано по robots.txt: %d", len(self.disallowed_pages)
-            )
+            self.logger.info("Заблокировано по robots.txt: %d", len(self.disallowed_pages))
         return results
 
-    # ------------------------- workers ------------------------------
+    # ------------------------------ workers -------------------------------
 
     async def _worker(
         self,
         queue: "asyncio.Queue[Tuple[str, int]]",
         results: List[PageData],
-        max_pages: int,
     ) -> None:
-        """Основной цикл воркера."""
-        try:
-            while True:
-                url, depth = await queue.get()
-
-                if depth > self.config.max_depth or len(results) >= max_pages:
-                    queue.task_done()
+        while True:
+            url, depth = await queue.get()
+            try:
+                if depth > self.config.max_depth or (
+                    self.config.max_pages and len(results) >= self.config.max_pages
+                ):
                     continue
 
                 page = await self._safe_fetch(url)
@@ -245,33 +254,24 @@ class AsyncCrawler:
                         if link not in self.visited:
                             self.visited.add(link)
                             await queue.put((link, depth + 1))
-
+            finally:
                 queue.task_done()
-        except asyncio.CancelledError:
-            return
 
-    # ----------------------- HTTP & parsing -------------------------
+    # -------------------------- HTTP fetch logic --------------------------
 
     async def _safe_fetch(self, url: str) -> Optional[PageData]:
-        """Обёртка над _fetch() с контролем семафора."""
         async with self._sem:
             return await self._fetch(url)
 
     async def _fetch(self, url: str) -> Optional[PageData]:
-        """Загружает страницу с учётом robots, rate-limit и retry."""
         if not self.session:
             raise RuntimeError("Crawler session not initialised")
-
         if not self._is_allowed(url):
             self.disallowed_pages.append(url)
             return None
 
         attempts = 0
-        crawl_delay = (
-            self.robots_rules.crawl_delay(self.config.user_agent)
-            if self.robots_rules
-            else None
-        )
+        crawl_delay = self.robots_rules.crawl_delay(self.config.user_agent) if self.robots_rules else None
 
         while attempts <= self.retry_times:
             await self._wait_for_rate_limit(crawl_delay)
@@ -281,123 +281,90 @@ class AsyncCrawler:
                     ctype = resp.headers.get("Content-Type", "")
                     if resp.status in self._RETRY_STATUS:
                         raise ClientError(f"Retryable status: {resp.status}")
-
                     if resp.status == 200 and ctype.startswith("text/html"):
                         text = await resp.text()
                         return PageData(url, text)
-
-                    # Не HTML → игнорируем без ошибки.
-                    return None
-
+                    return None  # Non-HTML
             except (ClientError, asyncio.TimeoutError) as exc:
                 attempts += 1
                 if attempts > self.retry_times:
                     self.logger.debug("Отказ: %s (%s)", url, exc)
                     break
-
                 backoff = min(60.0, 2 ** attempts)
-                self.logger.debug(
-                    "Retry %d/%d for %s after %.1fs", attempts, self.retry_times, url, backoff
-                )
+                self.logger.debug("Retry %d/%d for %s after %.1fs", attempts, self.retry_times, url, backoff)
                 await asyncio.sleep(backoff)
-
             finally:
+                # Ensure Crawl-delay even when request failed fast
                 elapsed = time.monotonic() - start
-                # Если скачивание шло дольше min_interval, лимитер уже «отдохнул».
                 if crawl_delay:
-                    # Гарантируем, что средний QPS не превысит Crawl-delay.
                     await asyncio.sleep(max(0.0, crawl_delay - elapsed))
-
         return None
 
-    async def _extract(self, page: PageData) -> List[str]:
-        """Извлекает внутренние ссылки из HTML."""
-        soup = BeautifulSoup(page.content, "html.parser")
-        page_host = urlparse(page.url).netloc
+    # ---------------------------- extraction ------------------------------
 
+    async def _extract(self, page: PageData) -> List[str]:
+        soup = BeautifulSoup(page.content, "html.parser")
+        host = urlparse(page.url).netloc
         links: List[str] = []
         for tag in soup.find_all("a", href=True):
             href = tag["href"]
             if href.startswith("mailto:") or href.startswith("javascript:"):
                 continue
             abs_url = self._normalize_url(urljoin(page.url, href))
-            parsed = urlparse(abs_url)
-            if parsed.netloc == page_host:
+            if urlparse(abs_url).netloc == host:
                 links.append(abs_url)
         return links
 
-    # -------------------- rate-limit helpers ------------------------
+    # ---------------------------- rate-limit ------------------------------
 
     async def _wait_for_rate_limit(self, crawl_delay: Optional[float]) -> None:
-        """Блокирует вызов, обеспечивая глобальный QPS и Crawl-delay."""
         min_interval = max(1.0 / self.rate_limit, crawl_delay or 0.0)
         async with self._rate_lock:
-            now = time.monotonic()
-            wait_for = min_interval - (now - self._last_request_ts)
+            target_time = max(self._last_request_ts + min_interval, time.monotonic())
+            wait_for = target_time - time.monotonic()
             if wait_for > 0:
                 await asyncio.sleep(wait_for)
+            # Reserve the next slot *before* releasing the lock
             self._last_request_ts = time.monotonic()
 
-    # ----------------------- misc helpers ---------------------------
+    # ------------------------------- helpers ------------------------------
 
     def _is_allowed(self, url: str) -> bool:
-        """Проверка robots.txt."""
-        if not self.robots_rules:
-            return True
-        return self.robots_rules.can_fetch(
+        return True if not self.robots_rules else self.robots_rules.can_fetch(
             self.config.user_agent, urlparse(url).path
         )
 
     async def _load_robots(self) -> None:
-        """Загружает и парсит robots.txt (best-effort)."""
         if not self.session:
             return
-
         parsed = urlparse(str(self.config.base_url))
-        robots_url = urlunparse(
-            (parsed.scheme, parsed.netloc, "/robots.txt", "", "", "")
-        )
-
+        robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
         try:
             async with self.session.get(robots_url) as resp:
                 if resp.status == 200:
                     text = await resp.text()
                     self.robots_rules = RobotsTxtRules(text)
                 else:
-                    self.logger.debug(
-                        "robots.txt не найден (%s): %s", resp.status, robots_url
-                    )
-        except Exception as exc:  # pylint: disable=broad-except
+                    self.logger.debug("robots.txt не найден (%s): %s", resp.status, robots_url)
+        except Exception as exc:  # noqa: BLE001 (best‑effort)
             self.logger.warning("Ошибка загрузки robots.txt: %s", exc)
 
+    # ------------------------------ validation ---------------------------
+
     def _validate_config(self) -> None:
-        """Мини-валидация обязательных полей конфигурации."""
-        required = ("base_url", "user_agent", "timeout", "max_depth", "rate_limit")
+        required = ("base_url", "user_agent", "timeout", "max_depth", "rate_limit", "concurrency")
         for field in required:
             if not hasattr(self.config, field):
                 raise AttributeError(f"config missing required attribute '{field}'")
 
-        defaults = {
-            "retry_times": 0,
-            "concurrency": int(max(1, float(self.config.rate_limit))),
-            "max_pages": 5000,
-        }
-        for name, value in defaults.items():
-            if not hasattr(self.config, name):
-                setattr(self.config, name, value)
-
-    # ----------------------------------------------------------------
+    # --------------------------- static helpers --------------------------
 
     @staticmethod
     def _normalize_url(url: str) -> str:
-        """
-        Примитивная нормализация URL:
-        • схема/хост в lower-case;
-        • убираем query/fragment;
-        • пустой path → '/'.
-        """
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
         netloc = parsed.netloc.lower()
         path = parsed.path or "/"
-        return urlunparse((scheme, netloc, path.rstrip("/"), "", "", ""))
+        if path != "/":
+            path = path.rstrip("/")
+        return urlunparse((scheme, netloc, path, "", "", ""))

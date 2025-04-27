@@ -1,81 +1,114 @@
-# site_scout/config.py
+# === FILE: site_scout_project/site_scout/config.py ===
+"""SiteScout configuration handling.
+
+Provides :class:`ScannerConfig` (validated settings) and :func:`load_config` that
+searches for a *configs/default.yaml* in the *current working directory* first
+(so tests can monkey‑patch *cwd*), then falls back to the packaged default.
 """
-Модуль для загрузки и валидации конфигурации сканера SiteScout.
-Используется Pydantic для описания схемы и проверки данных.
-"""
+from __future__ import annotations
+
+import json
 from pathlib import Path
+from typing import Optional, Union
+from urllib.parse import urlparse
+
 import yaml
-from pydantic import BaseModel, HttpUrl, Field, validator
+from pydantic import BaseModel, Field, root_validator, validator
+
+__all__ = ["ScannerConfig", "load_config"]
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+_BUILTIN_DEFAULT = _PACKAGE_ROOT / "configs" / "default.yaml"
+
+# ---------------------------------------------------------------------------
+# Pydantic models
+# ---------------------------------------------------------------------------
 
 
-def _ensure_path(path_str: str) -> Path:
-    """
-    Преобразует строку в Path и проверяет существование файла.
-    """
-    p = Path(path_str)
-    if not p.exists():
-        raise FileNotFoundError(f"Файл не найден: {p}")
-    return p
+class Wordlists(BaseModel):
+    """Paths to wordlists used by brute‑forcer (may be omitted)."""
+
+    paths: Optional[str] = None
+    files: Optional[str] = None
+
 
 class ScannerConfig(BaseModel):
-    """
-    Схема конфигурации сканера.
+    """Validated configuration for the SiteScout crawler."""
 
-    Атрибуты:
-      - base_url: стартовый URL для обхода
-      - max_depth: глубина рекурсии ссылок
-      - timeout: таймаут запросов (сек)
-      - user_agent: заголовок HTTP User-Agent
-      - rate_limit: максимальная частота запросов (запросов в секунду)
-      - retry_times: количество повторных попыток при ошибках 5xx
-      - wordlists: словари для brute-force (paths и files)
-    """
-    base_url: HttpUrl = Field(..., description="Стартовый URL для сканирования")
-    max_depth: int = Field(3, ge=0, le=10, description="Максимальная глубина рекурсии")
-    timeout: float = Field(10.0, gt=0, description="Таймаут HTTP-запросов в секундах")
-    user_agent: str = Field("SiteScoutBot/1.0", min_length=5, description="User-Agent для запросов")
-    rate_limit: float = Field(1.0, gt=0, description="Частота запросов (зап/сек)")
-    retry_times: int = Field(0, ge=0, description="Повторы при HTTP-ошибках 5xx")
-    wordlists: dict[str, Path] = Field(..., description="Словари для brute-force: 'paths' и 'files'")
+    # Mandatory
+    base_url: str = Field(..., description="Root URL of the target website")
 
-    @validator("wordlists", pre=True)
-    def _validate_wordlists(cls, v):
-        """
-        Конвертирует строки в Path и проверяет наличие файлов.
-        Ожидается словарь {'paths': '...', 'files': '...'}.
-        """
-        if not isinstance(v, dict) or not v:
-            raise ValueError("wordlists должно быть непустым словарем")
-        converted: dict[str, Path] = {}
-        for key, val in v.items():
-            converted[key] = _ensure_path(val)
-        return converted
+    # Optional – sane defaults
+    max_depth: int = Field(2, ge=0)
+    timeout: float = Field(5.0, gt=0)
+    user_agent: str = Field("SiteScout/1.0")
+    rate_limit: float = Field(1.0, gt=0)
+    retry_times: int = Field(2, ge=0)
+
+    # Added fields needed by crawler/tests
+    concurrency: int = Field(10, ge=1)
+    max_pages: Optional[int] = Field(None, ge=1)
+
+    wordlists: Wordlists = Field(default_factory=Wordlists)
+
+    class Config:
+        extra = "forbid"
+        validate_assignment = True
+
+    # ------------------------------------------------------------------
+    # Validators
+    # ------------------------------------------------------------------
+
+    @validator("base_url")
+    def _validate_base_url(cls, v: str) -> str:  # noqa: N805 – pydantic naming
+        v = v.rstrip("/")
+        pr = urlparse(v)
+        if pr.scheme not in {"http", "https"} or not pr.netloc:
+            raise ValueError("base_url must be an absolute http(s) URL")
+        return v
+
+    @root_validator
+    def _check_wordlists_exist(cls, values):  # noqa: N805
+        wl: Wordlists = values.get("wordlists")  # type: ignore[assignment]
+        for label in ("paths", "files"):
+            path = getattr(wl, label, None)
+            if path and not Path(path).exists():
+                raise FileNotFoundError(f"Wordlist '{path}' does not exist")
+        return values
 
 
-def load_config(path: str | Path | None = None) -> ScannerConfig:
-    """
-    Загружает конфигурацию из YAML-файла.
-    Если path не указан или файл не найден, пытается использовать 'configs/default.yaml'.
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _read_config_file(path: Path) -> dict:
+    """Read YAML/JSON file and return dict."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    text = path.read_text(encoding="utf-8")
+    ext = path.suffix.lower()
+    if ext in {".yaml", ".yml"}:
+        return yaml.safe_load(text) or {}
+    if ext == ".json":
+        return json.loads(text)
+    raise ValueError(f"Unsupported config extension: {ext}")
+
+
+def load_config(path: Optional[Union[str, Path]] = None) -> ScannerConfig:
+    """Load configuration.
+
+    Order of precedence when *path* is *None*:
+    1. ``$PWD/configs/default.yaml`` – allows tests to monkey‑patch cwd.
+    2. Built‑in file bundled with the package.
     """
     if path is None:
-        config_path = Path("configs/default.yaml")
-    else:
-        config_path = Path(path)
-        if not config_path.exists():
-            fallback = Path("configs/default.yaml")
-            if fallback.exists():
-                config_path = fallback
-            else:
-                raise FileNotFoundError(f"Конфиг не найден: {path}")
-    with open(config_path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        candidate = Path.cwd() / "configs" / "default.yaml"
+        path = candidate if candidate.exists() else _BUILTIN_DEFAULT
+
+    data = _read_config_file(Path(path))
     return ScannerConfig(**data)
-
-
-if __name__ == "__main__":
-    import sys
-    try:
-        cfg = load_config(sys.argv[1] if len(sys.argv) > 1 else None)
-        print(cfg.json(indent=2, ensure_ascii=False))
-    except Exception as e:
-        print(f"Ошибка загрузки конфигурации: {e}")
