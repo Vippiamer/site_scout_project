@@ -6,3 +6,30 @@
 2025-04-26 18:49:21 [INFO] SiteScout: Loaded robots.txt from http://localhost:36285/robots.txt
 2025-04-26 18:50:21 [INFO] SiteScout: Loaded robots.txt from http://localhost:36302/robots.txt
 2025-04-26 18:50:21 [ERROR] SiteScout: Ошибка при краулинге http://localhost:36302: 'AsyncCrawler' object has no attribute 'fetch_page'
+2025-04-26 19:13:51 [INFO] SiteScout: Loaded robots.txt from http://localhost:36566/robots.txt
+2025-04-26 19:16:09 [INFO] SiteScout: Loaded robots.txt from http://localhost:36607/robots.txt
+2025-04-26 19:17:50 [INFO] SiteScout: Loaded robots.txt from http://localhost:36643/robots.txt
+2025-04-26 19:22:25 [INFO] SiteScout: Обрабатываю URL: http://localhost:36701 с глубиной 0
+2025-04-26 19:22:25 [INFO] SiteScout: Loaded robots.txt from http://localhost:36701/robots.txt
+2025-04-26 19:27:25 [INFO] SiteScout: Loaded robots.txt from http://localhost:36760/robots.txt
+2025-04-26 19:29:02 [INFO] SiteScout: Loaded robots.txt from http://localhost:36788/robots.txt
+2025-04-26 19:30:44 [INFO] SiteScout: Loaded robots.txt from http://localhost:36804/robots.txt
+2025-04-26 19:32:44 [INFO] SiteScout: Loaded robots.txt from http://localhost:36828/robots.txt
+2025-04-26 19:34:09 [INFO] SiteScout: Loaded robots.txt from http://localhost:36847/robots.txt
+2025-04-26 19:37:27 [INFO] SiteScout: Loaded robots.txt from http://localhost:36884/robots.txt
+2025-04-26 19:38:37 [INFO] SiteScout: Loaded robots.txt from http://localhost:36907/robots.txt
+2025-04-26 19:40:00 [INFO] SiteScout: Loaded robots.txt from http://localhost:36925/robots.txt
+2025-04-26 19:42:36 [INFO] SiteScout: Старт обхода с URL: http://localhost:36945
+2025-04-26 19:42:36 [INFO] SiteScout: Loaded robots.txt from http://localhost:36945/robots.txt
+2025-04-26 19:42:36 [INFO] SiteScout: Успешно загружена страница: http://localhost:36945
+2025-04-26 19:42:36 [INFO] SiteScout: Обход завершён, собрано 1 страниц
+2025-04-26 19:44:10 [INFO] SiteScout: Старт обхода с URL: http://localhost:36973
+2025-04-26 19:44:10 [INFO] SiteScout: Loaded robots.txt from http://localhost:36973/robots.txt
+2025-04-26 19:44:10 [INFO] SiteScout: Успешно загружена страница: http://localhost:36973
+2025-04-26 19:44:10 [INFO] SiteScout: Обход завершён, собрано 1 страниц
+2025-04-26 21:20:52 [INFO] SiteScout: Старт обхода с URL: http://localhost:37733
+2025-04-26 21:20:53 [INFO] SiteScout: Loaded robots.txt from http://localhost:37733/robots.txt
+2025-04-26 21:20:53 [INFO] SiteScout: Обход завершён, собрано 0 страниц
+2025-04-26 21:23:20 [INFO] SiteScout: Старт обхода с URL: http://localhost:37752
+2025-04-26 21:23:20 [INFO] SiteScout: Loaded robots.txt from http://localhost:37752/robots.txt
+2025-04-26 21:23:20 [INFO] SiteScout: Обход завершён, собрано 0 страниц

@@ -7,15 +7,17 @@
 - Вывод в консоль и в файл одновременно.
 - Поддержка уровней DEBUG, INFO, WARNING, ERROR.
 - Форматирование с таймстемпом, уровнем и источником события.
+- Гибкая поддержка пользовательского формата логов.
 """
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
-
+from typing import Optional
 
 def init_logging(
     log_file: str = "site_scout.log",
-    level: str = "INFO"
+    level: str = "INFO",
+    log_format: Optional[str] = None
 ) -> logging.Logger:
     """
     Инициализирует и возвращает настроенный логгер.
@@ -23,19 +25,23 @@ def init_logging(
     Параметры:
         log_file: Путь к файлу для записи логов.
         level:    Уровень логирования ('DEBUG', 'INFO', 'WARNING', 'ERROR').
+        log_format: Формат логов. Если не указан, используется стандартный.
 
     Возвращает:
         logging.Logger — экземпляр логгера с двумя хендлерами.
     """
-    # Создаём логгер с именем проекта
     logger = logging.getLogger("SiteScout")
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 
-    # Общий форматтер
-    formatter = logging.Formatter(
-        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+    # Удаляем старые хендлеры, если они были (чтобы не дублировать вывод)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # Форматтер логов
+    if log_format is None:
+        log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    formatter = logging.Formatter(fmt=log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
     # 1) Консольный хендлер
     console_handler = logging.StreamHandler(sys.stdout)
@@ -55,7 +61,6 @@ def init_logging(
     logger.addHandler(file_handler)
 
     return logger
-
 
 # Пример использования
 if __name__ == "__main__":
