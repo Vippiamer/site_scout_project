@@ -44,4 +44,4 @@ target-version = ["py310"]
 
 [tool.ruff]
 line-length = 100
-select = ["ALL"]
+extend-ignore = ["E501"]

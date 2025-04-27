@@ -19,8 +19,8 @@ fields is backward-compatible.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import List, Sequence
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -34,11 +34,11 @@ class ParsedPage:
 
     url: str
     title: str
-    links: List[str]
+    links: list[str]
     text: str
 
     # Convenience helpers ---------------------------------------------------
-    def same_host_links(self) -> List[str]:
+    def same_host_links(self) -> list[str]:
         """Return only links that point to the same host as *self.url*."""
         host = urlparse(self.url).netloc
         return [u for u in self.links if urlparse(u).netloc == host]
@@ -47,6 +47,7 @@ class ParsedPage:
 # ---------------------------------------------------------------------------
 # Public function
 # ---------------------------------------------------------------------------
+
 
 def _normalize_url(url: str) -> str:
     """Very small URL canonicalisation (lower-case host, remove query/fragments)."""
@@ -66,6 +67,7 @@ def parse_html(page) -> ParsedPage:
         Either a *str* (HTML markup) **or** a ``PageData`` object with
         ``url`` and ``content`` attributes.  Accepting both keeps the public
         API flexible while we refactor internals.
+
     """
     if hasattr(page, "content") and hasattr(page, "url"):
         html: str = page.content  # type: ignore[assignment]
@@ -81,7 +83,7 @@ def parse_html(page) -> ParsedPage:
 
     # Extract links (absolute, deduplicated, stable ordering)
     seen = set()
-    links: List[str] = []
+    links: list[str] = []
     for tag in soup.find_all("a", href=True):
         href = tag["href"].strip()
         if href.startswith("mailto:") or href.startswith("javascript:"):

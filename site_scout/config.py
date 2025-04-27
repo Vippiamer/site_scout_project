@@ -1,114 +1,130 @@
 # === FILE: site_scout_project/site_scout/config.py ===
-"""SiteScout configuration handling.
+"""
+Configuration loader/validator for **SiteScout**.
 
-Provides :class:`ScannerConfig` (validated settings) and :func:`load_config` that
-searches for a *configs/default.yaml* in the *current working directory* first
-(so tests can monkey‑patch *cwd*), then falls back to the packaged default.
+Provides a typed ``ScannerConfig`` object that tests instantiate
+directly (``ScannerConfig(base_url="…", …)``) *and* via helper
+:func:`load_config` / :meth:`ScannerConfig.load_from_file`.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional, Union
-from urllib.parse import urlparse
+from typing import Any, Dict, Mapping
 
-import yaml
-from pydantic import BaseModel, Field, root_validator, validator
+import yaml  # type: ignore[import]
 
-__all__ = ["ScannerConfig", "load_config"]
-
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
-
-_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-_BUILTIN_DEFAULT = _PACKAGE_ROOT / "configs" / "default.yaml"
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
+__all__ = [
+    "ConfigError",
+    "ScannerConfig",
+    "load_config",
+]
 
 
-class Wordlists(BaseModel):
-    """Paths to wordlists used by brute‑forcer (may be omitted)."""
-
-    paths: Optional[str] = None
-    files: Optional[str] = None
+class ConfigError(RuntimeError):
+    """Raised when configuration is missing or malformed."""
 
 
-class ScannerConfig(BaseModel):
-    """Validated configuration for the SiteScout crawler."""
+class ScannerConfig:
+    """Typed configuration wrapper with sensible defaults.
 
-    # Mandatory
-    base_url: str = Field(..., description="Root URL of the target website")
-
-    # Optional – sane defaults
-    max_depth: int = Field(2, ge=0)
-    timeout: float = Field(5.0, gt=0)
-    user_agent: str = Field("SiteScout/1.0")
-    rate_limit: float = Field(1.0, gt=0)
-    retry_times: int = Field(2, ge=0)
-
-    # Added fields needed by crawler/tests
-    concurrency: int = Field(10, ge=1)
-    max_pages: Optional[int] = Field(None, ge=1)
-
-    wordlists: Wordlists = Field(default_factory=Wordlists)
-
-    class Config:
-        extra = "forbid"
-        validate_assignment = True
-
-    # ------------------------------------------------------------------
-    # Validators
-    # ------------------------------------------------------------------
-
-    @validator("base_url")
-    def _validate_base_url(cls, v: str) -> str:  # noqa: N805 – pydantic naming
-        v = v.rstrip("/")
-        pr = urlparse(v)
-        if pr.scheme not in {"http", "https"} or not pr.netloc:
-            raise ValueError("base_url must be an absolute http(s) URL")
-        return v
-
-    @root_validator
-    def _check_wordlists_exist(cls, values):  # noqa: N805
-        wl: Wordlists = values.get("wordlists")  # type: ignore[assignment]
-        for label in ("paths", "files"):
-            path = getattr(wl, label, None)
-            if path and not Path(path).exists():
-                raise FileNotFoundError(f"Wordlist '{path}' does not exist")
-        return values
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _read_config_file(path: Path) -> dict:
-    """Read YAML/JSON file and return dict."""
-    if not path.exists():
-        raise FileNotFoundError(path)
-
-    text = path.read_text(encoding="utf-8")
-    ext = path.suffix.lower()
-    if ext in {".yaml", ".yml"}:
-        return yaml.safe_load(text) or {}
-    if ext == ".json":
-        return json.loads(text)
-    raise ValueError(f"Unsupported config extension: {ext}")
-
-
-def load_config(path: Optional[Union[str, Path]] = None) -> ScannerConfig:
-    """Load configuration.
-
-    Order of precedence when *path* is *None*:
-    1. ``$PWD/configs/default.yaml`` – allows tests to monkey‑patch cwd.
-    2. Built‑in file bundled with the package.
+    Accepts either a mapping or keyword arguments; kwargs override
+    mapping values.
     """
-    if path is None:
-        candidate = Path.cwd() / "configs" / "default.yaml"
-        path = candidate if candidate.exists() else _BUILTIN_DEFAULT
 
-    data = _read_config_file(Path(path))
-    return ScannerConfig(**data)
+    # --------------------------------------------------------------------- #
+    # construction                                                          #
+    # --------------------------------------------------------------------- #
+
+    def __init__(self, data: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
+        merged: Dict[str, Any] = {**(data or {}), **kwargs}
+
+        # required
+        self.base_url: str = str(merged.get("base_url", ""))
+
+        # optional knobs
+        self.max_depth: int = int(merged.get("max_depth", 3))
+        self.max_pages: int = int(merged.get("max_pages", 1_000))
+        self.timeout: float = float(merged.get("timeout", 10.0))
+        self.user_agent: str = str(merged.get("user_agent", "SiteScoutBot/1.0"))
+        self.rate_limit: float = float(merged.get("rate_limit", 1.0))
+        self.retry_times: int = int(merged.get("retry_times", 3))
+        self.wordlists: Dict[str, str] = dict(merged.get("wordlists", {}))
+
+        # derived
+        self.base_domain: str = Path(self.base_url).anchor or ""
+
+        self._validate()
+
+    # --------------------------------------------------------------------- #
+    # validation                                                            #
+    # --------------------------------------------------------------------- #
+
+    def _validate(self) -> None:  # noqa: D401
+        if not self.base_url:
+            raise ConfigError("'base_url' is required in the configuration.")
+        if not isinstance(self.wordlists, dict):
+            raise ConfigError("'wordlists' must be a mapping of name → path.")
+
+    # --------------------------------------------------------------------- #
+    # serialisation helpers                                                 #
+    # --------------------------------------------------------------------- #
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "base_url": self.base_url,
+            "max_depth": self.max_depth,
+            "max_pages": self.max_pages,
+            "timeout": self.timeout,
+            "user_agent": self.user_agent,
+            "rate_limit": self.rate_limit,
+            "retry_times": self.retry_times,
+            "wordlists": self.wordlists,
+        }
+
+    def json(self, *, pretty: bool = False) -> str:
+        """Return JSON representation."""
+        return json.dumps(self.as_dict(), ensure_ascii=False, indent=2 if pretty else None)
+
+    # --------------------------------------------------------------------- #
+    # dunder helpers                                                        #
+    # --------------------------------------------------------------------- #
+
+    def __repr__(self) -> str:  # pragma: no cover
+        kv = ", ".join(f"{k}={v!r}" for k, v in self.as_dict().items())
+        return f"{self.__class__.__name__}({kv})"
+
+    # --------------------------------------------------------------------- #
+    # class helpers required by tests/engine                                #
+    # --------------------------------------------------------------------- #
+
+    @classmethod
+    def load_from_file(cls, path: str | Path | None) -> "ScannerConfig":
+        """Factory wrapper around :func:`load_config`."""
+        return load_config(path)
+
+
+# --------------------------------------------------------------------------- #
+# public loader                                                               #
+# --------------------------------------------------------------------------- #
+
+
+def load_config(path: str | Path | None) -> ScannerConfig:
+    """Load YAML config. *None* → default config."""
+    if path is None:
+        return ScannerConfig()
+
+    cfg_path = Path(path).expanduser()
+    if not cfg_path.exists():
+        raise ConfigError(f"Config file not found: {cfg_path}")
+
+    try:
+        with cfg_path.open(encoding="utf-8") as fp:
+            data = yaml.safe_load(fp) or {}
+    except yaml.YAMLError as exc:  # pragma: no cover
+        raise ConfigError(f"YAML parse error: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError("Top-level YAML structure must be a mapping.")
+
+    return ScannerConfig(data)

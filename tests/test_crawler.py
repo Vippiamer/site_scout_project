@@ -1,11 +1,11 @@
-# === FILE: site_scout_project/tests/test_crawler.py
+# === FILE: site_scout_project/tests/test_crawler.py ===
 # Refactored test-suite for SiteScout async crawler
 from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator, Dict
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -14,6 +14,7 @@ from aiohttp import web
 
 from site_scout.config import ScannerConfig
 from site_scout.crawler.crawler import AsyncCrawler
+
 
 # --------------------------------------------------------------------------- #
 #                            Pytest-configuration                              #
@@ -35,9 +36,9 @@ SLOW_SLEEP: float = 0.5
 #: number of pages created by the stress fixture / test (root + pages 1…200)
 STRESS_PAGES: int = 201  # keeps test quick even on CI
 
+
 def normalize_url(url: str) -> str:
-    """
-    Normalise *url* for comparison purposes.
+    """Normalise *url* for comparison purposes.
 
     *   Strips query and fragment parts.
     *   Adds a trailing slash **only** for paths that look like directories
@@ -51,8 +52,7 @@ def normalize_url(url: str) -> str:
 
 
 async def run_crawler(config: ScannerConfig, expected_pages: int = 100):
-    """
-    Run the crawler inside an overall timeout that scales with *expected_pages*.
+    """Run the crawler inside an overall timeout that scales with *expected_pages*.
 
     Uses :pyfunc:`asyncio.wait_for` (works on Python 3.8-3.12) instead of the
     3.11-only context manager ``asyncio.timeout``.
@@ -66,8 +66,9 @@ async def run_crawler(config: ScannerConfig, expected_pages: int = 100):
 #                                  Fixtures                                   #
 # --------------------------------------------------------------------------- #
 
-@pytest.fixture
-def empty_wordlists(tmp_path: Path) -> Dict[str, Path]:
+
+@pytest.fixture()
+def empty_wordlists(tmp_path: Path) -> dict[str, Path]:
     """Return a dict with empty wordlist files the crawler expects."""
     paths_file = tmp_path / "paths.txt"
     files_file = tmp_path / "files.txt"
@@ -77,8 +78,7 @@ def empty_wordlists(tmp_path: Path) -> Dict[str, Path]:
 
 
 async def _serve_app(app: web.Application, port: int) -> AsyncIterator[str]:
-    """
-    Lightweight context manager that starts *app* on *port*.
+    """Lightweight context manager that starts *app* on *port*.
 
     Ensures proper cleanup even when a test fails halfway.
     """
@@ -95,6 +95,7 @@ async def _serve_app(app: web.Application, port: int) -> AsyncIterator[str]:
 # --------------------------------------------------------------------------- #
 #                            Test-server fixtures                             #
 # --------------------------------------------------------------------------- #
+
 
 @pytest_asyncio.fixture
 async def test_server_allow_all(unused_tcp_port: int) -> AsyncIterator[str]:
@@ -136,7 +137,8 @@ async def test_server_block_page1(unused_tcp_port: int) -> AsyncIterator[str]:
 
     async def handle_page1(_):
         return web.Response(
-            text="<html><body>Page1</body></html>", content_type="text/html"
+            text="<html><body>Page1</body></html>",
+            content_type="text/html",
         )
 
     async def handle_robots(_):
@@ -158,6 +160,7 @@ async def test_server_large(unused_tcp_port: int) -> AsyncIterator[str]:
     app = web.Application()
 
     links = "".join(f'<a href="/page{i}">Page{i}</a>' for i in range(1, STRESS_PAGES))
+
     async def handle_root(_):
         return web.Response(text=links, content_type="text/html")
 
@@ -180,7 +183,8 @@ async def test_server_large(unused_tcp_port: int) -> AsyncIterator[str]:
 #                                   Tests                                     #
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.asyncio
+
+@pytest.mark.asyncio()
 async def test_basic_crawl(empty_wordlists, test_server_allow_all: str):
     config = ScannerConfig(
         base_url=test_server_allow_all,
@@ -201,7 +205,7 @@ async def test_basic_crawl(empty_wordlists, test_server_allow_all: str):
     assert len(urls) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_timeout_on_deep_page(empty_wordlists, test_server_allow_all: str):
     config = ScannerConfig(
         base_url=test_server_allow_all,
@@ -221,7 +225,7 @@ async def test_timeout_on_deep_page(empty_wordlists, test_server_allow_all: str)
     assert len(urls) == 3
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_respect_robots(empty_wordlists, test_server_block_page1: str):
     config = ScannerConfig(
         base_url=test_server_block_page1,
@@ -238,7 +242,7 @@ async def test_respect_robots(empty_wordlists, test_server_block_page1: str):
     assert normalize_url(f"{test_server_block_page1}/page1") not in urls
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_depth_limit(empty_wordlists, test_server_block_page1: str):
     config = ScannerConfig(
         base_url=test_server_block_page1,
@@ -250,12 +254,12 @@ async def test_depth_limit(empty_wordlists, test_server_block_page1: str):
     )
     pages = await run_crawler(config)
     assert {normalize_url(p.url) for p in pages} == {
-        normalize_url(test_server_block_page1)
+        normalize_url(test_server_block_page1),
     }
 
 
-@pytest.mark.asyncio
-@pytest.mark.slow
+@pytest.mark.asyncio()
+@pytest.mark.slow()
 async def test_stress_crawl(empty_wordlists, test_server_large: str):
     config = ScannerConfig(
         base_url=test_server_large,
@@ -274,7 +278,7 @@ async def test_stress_crawl(empty_wordlists, test_server_large: str):
         assert normalize_url(f"{test_server_large}/page{i}") in urls
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_crawler_handles_404(empty_wordlists, unused_tcp_port: int):
     app = web.Application()
 
@@ -287,9 +291,9 @@ async def test_crawler_handles_404(empty_wordlists, unused_tcp_port: int):
     app.router.add_get("/", handle_root)
     app.router.add_get("/robots.txt", handle_robots)
 
-    async for base_url in _serve_app(app, unused_tcp_port):
+    async for base in _serve_app(app, unused_tcp_port):
         config = ScannerConfig(
-            base_url=base_url,
+            base_url=base,
             max_depth=1,
             timeout=2.0,
             user_agent="TestAgent/1.0",
@@ -299,13 +303,13 @@ async def test_crawler_handles_404(empty_wordlists, unused_tcp_port: int):
         pages = await run_crawler(config)
 
     urls = {normalize_url(p.url) for p in pages}
-    assert normalize_url(base_url) in urls
-    assert normalize_url(f"{base_url}/missing") not in urls
+    assert normalize_url(base) in urls
+    assert normalize_url(f"{base}/missing") not in urls
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_concurrency(empty_wordlists, unused_tcp_port: int):
-    """Ensure that two slow pages are really fetched concurrently."""
+    """Ensure that two slow pages are fetched concurrently."""
     app = web.Application()
 
     async def slow1(_):
@@ -343,15 +347,13 @@ async def test_concurrency(empty_wordlists, unused_tcp_port: int):
         pages = await run_crawler(config, expected_pages=3)
         elapsed = time.perf_counter() - start
 
-    # Allow 50 % overhead versus a single request
-    assert elapsed < SLOW_SLEEP * 1.5, f"Expected concurrency, took {elapsed:.3f}s"
-
+    assert elapsed < SLOW_SLEEP * 1.5
     urls = {normalize_url(p.url) for p in pages}
     assert normalize_url(f"{base}/slow1") in urls
     assert normalize_url(f"{base}/slow2") in urls
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio()
 async def test_retry_on_server_error(empty_wordlists, unused_tcp_port: int):
     app = web.Application()
     call_count = {"n": 0}
@@ -364,7 +366,8 @@ async def test_retry_on_server_error(empty_wordlists, unused_tcp_port: int):
 
     async def root(_):
         return web.Response(
-            text='<a href="/flaky">Flaky</a>', content_type="text/html"
+            text='<a href="/flaky">Flaky</a>',
+            content_type="text/html",
         )
 
     async def robots(_):
@@ -388,5 +391,4 @@ async def test_retry_on_server_error(empty_wordlists, unused_tcp_port: int):
 
     urls = {normalize_url(p.url) for p in pages}
     assert normalize_url(f"{base}/flaky") in urls
-    # Ensure we really retried twice (total calls == 3)
     assert call_count["n"] == 3

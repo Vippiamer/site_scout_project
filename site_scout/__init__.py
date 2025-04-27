@@ -1,10 +1,11 @@
-# site_scout/__init__.py
+# === FILE: site_scout_project/site_scout/__init__.py ===
+
+"""SiteScout — модуль для сканирования сайтов.
+
+Импортирует необходимые компоненты для использования через пакет.
 """
-SiteScout package initializer.
-Defines package version and exposes CLI.
-"""
+
 __version__ = "0.1.0"
 
-# Expose CLI entry point
-from site_scout.cli import cli as main_cli
-from .cli import cli  # экспорт для pytest
+# Публичные импорты
+# (если понадобятся — сюда можно добавлять через __all__)

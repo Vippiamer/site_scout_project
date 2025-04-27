@@ -1,149 +1,125 @@
 # === FILE: site_scout_project/site_scout/cli.py ===
-"""SiteScout – Click‑based command‑line interface.
+"""Command-line interface for **SiteScout**.
 
-> **Why Click?**  Project tests (`tests/test_cli.py`) rely on *click*’s
-> `CliRunner`, so this module exports a *click* root command named **cli** that
-> matches those expectations yet re‑uses internal library code.
+Usage examples::
 
-Main responsibilities:
-* Parse options (global and per‑command).
-* Initialise logging once.
-* Load/patch configuration (e.g. `--limit`).
-* Delegate work to :pyfunc:`site_scout.engine.start_scan`.
-* Emit JSON to stdout and/or write JSON/HTML reports.
+    python -m site_scout.cli scan --config configs/default.yaml \
+        --json report.json
+
+    sitescout scan --html report.html  # uses defaults (no config file)
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 import click
 
-from site_scout.config import ScannerConfig, load_config
-from site_scout.engine import start_scan
-from site_scout.logger import init_logging
+from site_scout.engine import Engine
+from site_scout.logger import logger
 
-# ---------------------------------------------------------------------------
-# Optional reporting helpers (tests monkey‑patch these symbols!)
-# ---------------------------------------------------------------------------
-
-try:
-    from site_scout.report.json_report import render_json  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover – optional dependency
-    def render_json(data: Any, path: Path) -> None:  # type: ignore[override]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-try:
-    from site_scout.report.html_report import render_html  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    def render_html(data: Any, template: Optional[Path], path: Path) -> None:  # type: ignore[override]
-        path.write_text("<html><body><pre>HTML reporting disabled</pre></body></html>")
-
-# ---------------------------------------------------------------------------
-# Click root – global options shared by sub‑commands
-# ---------------------------------------------------------------------------
+VERSION = "1.0.0"
 
 
-@click.group()
-@click.version_option(version="1.0.0", prog_name="SiteScout")
+# --------------------------------------------------------------------------- #
+# root group                                                                  #
+# --------------------------------------------------------------------------- #
+
+
+@click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--config",
-    type=click.Path(path_type=Path, exists=True, dir_okay=False, readable=True),
-    help="Путь к YAML/JSON конфигу; если опущен – используется configs/default.yaml",
+    "config_path",
+    type=click.Path(dir_okay=False, exists=False, path_type=Path),
+    help="YAML configuration file. If omitted, defaults are used.",
+    default=None,
+    show_default=True,
 )
-@click.option("--limit", type=int, help="Жёсткий лимит количества страниц")
-@click.option("--log-level", default="INFO", help="Уровень логирования (DEBUG/INFO/…)")
-@click.option("--log-file", default="-", help="Файл логов или '-' для stdout")
-@click.option("--log-format", default="%(asctime)s %(levelname)s %(message)s")
+@click.option("--version", is_flag=True, help="Show version and exit.")
 @click.pass_context
-def cli(ctx: click.Context, **global_opts):  # noqa: D401
-    """Root command that stores *global* options in the Click context."""
+def cli(ctx: click.Context, config_path: Optional[Path], version: bool) -> None:  # noqa: D401
+    if version:
+        click.echo(f"SiteScout version {VERSION}")
+        ctx.exit()
 
-    # Logging first so that anything below is captured
-    init_logging(
-        level=global_opts.pop("log_level"),
-        log_file=global_opts.pop("log_file"),
-        fmt=global_opts.pop("log_format"),
-    )
-
-    cfg: ScannerConfig = load_config(global_opts.pop("config", None))
-    limit: Optional[int] = global_opts.pop("limit", None)
-    if limit:
-        cfg.max_pages = limit  # type: ignore[assignment]
-
-    # Save objects for sub‑commands
+    # store config-path (may be None) in context obj
     ctx.ensure_object(dict)
-    ctx.obj["CONFIG"] = cfg
-    ctx.obj["GLOBAL_OPTS"] = global_opts  # keep anything else (future‑proof)
+    ctx.obj["CONFIG_PATH"] = config_path
 
 
-# ---------------------------------------------------------------------------
-# Sub‑command: config – pretty‑print effective configuration
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
+# config command                                                              #
+# --------------------------------------------------------------------------- #
 
 
-@cli.command(help="Показать итоговую конфигурацию и выйти")
+@cli.command("config", help="Show effective configuration as JSON.")
 @click.pass_context
-def config(ctx: click.Context) -> None:  # noqa: D401
-    cfg: ScannerConfig = ctx.obj["CONFIG"]
-    click.echo(cfg.json(indent=2, ensure_ascii=False))
+def show_config(ctx: click.Context) -> None:  # noqa: D401
+    cfg_path: Optional[Path] = ctx.obj.get("CONFIG_PATH")
+    cfg = Engine.load_config(str(cfg_path) if cfg_path else None)
+    click.echo(cfg.json(pretty=True))
 
 
-# ---------------------------------------------------------------------------
-# Sub‑command: scan – full site crawl & reporting
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
+# scan command                                                                #
+# --------------------------------------------------------------------------- #
 
 
-@cli.command(help="Запустить сканирование и сформировать отчёты")
-@click.option("--json", "json_path", type=click.Path(path_type=Path), help="Сохранить JSON‑отчёт")
-@click.option("--html", "html_path", type=click.Path(path_type=Path), help="Сохранить HTML‑отчёт (требует Jinja2)")
-@click.option("--scan-timeout", type=float, default=None, help="Тайм‑аут сканирования (сек.)")
+@cli.command("scan", help="Run site scan and output report.")
+@click.option(
+    "--json",
+    "json_out",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    help="Write report as JSON to this file instead of stdout.",
+)
+@click.option(
+    "--html",
+    "html_out",
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    help="Write report as HTML to this file (overrides --json).",
+)
+@click.option(
+    "--scan-timeout",
+    type=float,
+    help="Override request timeout configured in YAML/defaults.",
+)
 @click.pass_context
-def scan(
+def scan_site(
     ctx: click.Context,
-    json_path: Optional[Path],
-    html_path: Optional[Path],
+    json_out: Optional[Path],
+    html_out: Optional[Path],
     scan_timeout: Optional[float],
 ) -> None:  # noqa: D401
+    """Perform scan and dump report (JSON by default)."""
+    cfg_path: Optional[Path] = ctx.obj.get("CONFIG_PATH")
+    cfg = Engine.load_config(str(cfg_path) if cfg_path else None)
 
-    cfg: ScannerConfig = ctx.obj["CONFIG"]
+    if scan_timeout is not None:
+        cfg.timeout = scan_timeout
 
-    # ------------------------------------------------------------------
-    # Run the asynchronous scan (respecting optional timeout)
-    # ------------------------------------------------------------------
-    try:
-        coro = start_scan(cfg)
-        report: Any
-        if scan_timeout:
-            report = asyncio.run(asyncio.wait_for(coro, timeout=scan_timeout))
-        else:
-            report = asyncio.run(coro)
-    except asyncio.TimeoutError:
-        click.echo("Сканирование не завершено за указанное время", err=True)
-        ctx.exit(1)
+    engine = Engine(cfg)
+    raw_pages = engine.start_scan()
+    report = engine.aggregate_results(raw_pages)
 
-    # ------------------------------------------------------------------
-    # STDOUT – always emit JSON for piping / tests
-    # ------------------------------------------------------------------
-    click.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    # decide output format -------------------------------------------------- #
+    if html_out is not None:
+        html_out.write_text(report.generate_html(), encoding="utf-8")
+        click.echo(str(html_out))
+        return
 
-    # ------------------------------------------------------------------
-    # Optional file outputs
-    # ------------------------------------------------------------------
-    if json_path:
-        render_json(report, json_path)  # type: ignore[arg-type]
+    if json_out is not None:
+        json_out.write_text(report.json(pretty=True), encoding="utf-8")
+        click.echo(str(json_out))
+        return
 
-    if html_path:
-        template: Optional[Path] = None  # reserved for future option
-        render_html(report, template, html_path)  # type: ignore[arg-type]
+    # default – pretty JSON to stdout
+    click.echo(report.json(pretty=True))
 
-
-# ---------------------------------------------------------------------------
-# Entry‑point (python ‑m site_scout.cli …)
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":  # pragma: no cover
-    cli()  # pylint: disable=no-value-for-parameter
+    try:
+        cli(obj={})
+    except Exception as exc:  # catch-all for CLI usability
+        logger.error("CLI error: %s", exc)
+        sys.exit(1)

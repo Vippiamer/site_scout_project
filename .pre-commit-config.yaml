@@ -1,0 +1,27 @@
+# === FILE: site_scout_project/.pre-commit-config.yaml ===
+# Pre‑commit hooks for code‑quality tooling.
+
+repos:
+  # ------------------------------- Ruff ----------------------------------- #
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.1
+    hooks:
+      - id: ruff
+        args: ["--fix"]           # авто‑исправление where possible
+
+  # ------------------------------- Black ---------------------------------- #
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        # Black already pins click; no extra deps needed
+
+  # ------------------------------- mypy ----------------------------------- #
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.0
+    hooks:
+      - id: mypy
+        args: ["--install-types", "--non-interactive"]   # auto‑download missing stubs
+        additional_dependencies:
+          - types-PyYAML>=6.0.0
+

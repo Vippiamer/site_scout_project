@@ -1,115 +1,63 @@
-# site_scout/localization.py
+# === FILE: site_scout_project/site_scout/localization.py ===
+"""Модуль для локализации ресурсов веб-сайтов."""
 
-"""
-Модуль: localization.py
+import re
+from pathlib import Path
+from typing import Collection
 
-Определение и группировка URL национальных сегментов сайта:
-- Япония (jp, /jp, hreflang ja-JP/ja, Accept-Language)
-- Южная Корея (kr, /kr, hreflang ko-KR/ko)
-- Китай (cn, /cn, hreflang zh-CN/zh)
-
-Функционал:
-- Анализ карты сайта или списка URL
-- Извлечение национальных поддоменов и каталогов
-- Использование меток hreflang и заголовка Accept-Language для уточнения принадлежности
-- Возврат словаря: {"jp": [...], "kr": [...], "cn": [...]} с URL для каждого сегмента
-"""
-from typing import List, Dict, Set
-from urllib.parse import urlparse
-from site_scout.utils import normalize_url, is_valid_url
-from site_scout.parser.html_parser import parse_html, ParsedPage
-from site_scout.utils import PageData
-import aiohttp
-
-# Определение локалей
-LOCALES = {
-    'jp': {
-        'subdomain': 'jp.',
-        'path_prefix': '/jp',
-        'hreflangs': {'ja', 'ja-JP'},
-        'accept_languages': {'ja', 'ja-JP'}
-    },
-    'kr': {
-        'subdomain': 'kr.',
-        'path_prefix': '/kr',
-        'hreflangs': {'ko', 'ko-KR'},
-        'accept_languages': {'ko', 'ko-KR'}
-    },
-    'cn': {
-        'subdomain': 'cn.',
-        'path_prefix': '/cn',
-        'hreflangs': {'zh', 'zh-CN'},
-        'accept_languages': {'zh', 'zh-CN'}
-    }
-}
+from site_scout.logger import logger
+from site_scout.utils import normalize_url, is_valid_url, PageData
 
 
-def detect_locales(urls: List[str]) -> Dict[str, Set[str]]:
-    """
-    Группирует URL по национальным сегментам на основе поддомена и префикса пути.
-
-    :param urls: список URL для анализа
-    :return: словарь {locale: set(URL)}
-
-    Пример использования:
-    ```python
-    urls = [
-        'https://jp.example.com',
-        'https://example.com/jp/page',
-        'https://example.com/page',
-    ]
-    segments = detect_locales(urls)
-    print(segments['jp'])  # содержит первые два URL
-    ```
-    """
-    result: Dict[str, Set[str]] = {loc: set() for loc in LOCALES}
-    for url in urls:
-        if not is_valid_url(url):
-            continue
-        parsed = urlparse(url)
-        host = parsed.hostname or ''
-        path = parsed.path or ''
-        for loc, cfg in LOCALES.items():
-            # Поддомен
-            if host.startswith(cfg['subdomain']):
-                result[loc].add(url)
-            # Путь
-            elif path.startswith(cfg['path_prefix'] + '/') or path == cfg['path_prefix']:
-                result[loc].add(url)
-    return result
+def normalize_path(path: str) -> str:
+    """Удаляет параметры и фрагменты из URL."""
+    return re.sub(r"[#?].*", "", path)
 
 
-async def refine_by_hreflang(page_url: str) -> List[str]:
-    """
-    Догружает страницу и извлекает ссылки с атрибутами hreflang, принадлежащие целевым локалям.
+def extract_links_from_content(content: str) -> list[str]:
+    """Извлекает все ссылки из текста страницы."""
+    links = re.findall(r"href=['\"](.*?)['\"]", content, flags=re.IGNORECASE)
+    return [link for link in links if link]
 
-    :param page_url: URL страницы
-    :return: список URL локализованного контента
 
-    Пример:
-    ```python
-    localized = asyncio.run(refine_by_hreflang('https://example.com'))
-    print(localized)  # URLs с нужными hreflang
-    ```
-    """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(page_url) as resp:
-            html = await resp.text(errors='ignore')
-    page_data = PageData(url=page_url, content=html, headers={})
-    parsed = parse_html(page_data)
+def localize_resources(resources: list[str], base_domain: str) -> list[str]:
+    """Фильтрует и нормализует ресурсы, принадлежащие базовому домену."""
+    localized = []
+    for res in resources:
+        normalized = normalize_url(res)
+        if is_valid_url(normalized, base_domain):
+            localized.append(normalized)
+    return localized
+
+
+def find_localized_segments(content: str, base_domain: str) -> list[str]:
+    """Ищет локализованные сегменты в HTML содержимом."""
+    links = extract_links_from_content(content)
+    return localize_resources(links, base_domain)
+
+
+def get_localized_urls(pages: Collection[PageData], base_domain: str) -> list[str]:
+    """Проходит по страницам и собирает локализованные URL."""
     localized_urls = []
-    for link in parsed.links:
-        # Ищем <link rel="alternate" hreflang="..">
-        # Но html_parser пока не парсит их, поэтому делаем быстрый поиск
-        # Можно расширить позже
-        pass
+    for page in pages:
+        localized_urls.extend(find_localized_segments(page.content, base_domain))
     return localized_urls
 
-# Опционально: функция комбинированного детекта
-async def detect_and_refine(urls: List[str]) -> Dict[str, Set[str]]:
-    """
-    Сначала detect_locales, потом для каждой URL базовой версии добавляет уточнённые по hreflang.
-    """
-    segments = detect_locales(urls)
-    # Здесь можно для каждой url в универсальном сегменте вызвать refine_by_hreflang
+
+def extract_segments_from_urls(urls: list[str], base_domain: str) -> list[str]:
+    """Извлекает сегменты путей из списка URL, принадлежащих базовому домену."""
+    segments = []
+    for url in urls:
+        if is_valid_url(url, base_domain):
+            path = normalize_path(url)
+            segment = Path(path).parts[1] if len(Path(path).parts) > 1 else ""
+            if segment:
+                segments.append(segment)
     return segments
+
+
+def remove_duplicates(urls: Collection[str]) -> list[str]:
+    """Удаляет дублирующиеся URL."""
+    unique_urls = list(set(urls))
+    logger.debug(f"Удалено {len(urls) - len(unique_urls)} дубликатов")
+    return unique_urls

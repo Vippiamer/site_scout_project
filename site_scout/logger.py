@@ -1,71 +1,108 @@
-# site_scout/logger.py
+# === FILE: site_scout_project/site_scout/logger.py ===
+"""Site‑wide logging configuration for the **SiteScout** project.
 
-"""
-Модуль: site_scout/logger.py
+Highlights
+----------
+* Unified format for console and optional file output (with rotation).
+* Single, importable instance :data:`logger` – simply::
 
-Настройка логирования для проекта SiteScout.
-- Вывод в консоль и в файл одновременно.
-- Поддержка уровней DEBUG, INFO, WARNING, ERROR.
-- Форматирование с таймстемпом, уровнем и источником события.
-- Гибкая поддержка пользовательского формата логов.
+      from site_scout.logger import logger
+      logger.info("Scanning started")
+* Re‑configurable at runtime via :func:`configure`.
 """
+from __future__ import annotations
+
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
-from typing import Optional
+from pathlib import Path
+from typing import Final, Union
+
+# --------------------------------------------------------------------------- #
+# Constants & basic types                                                     #
+# --------------------------------------------------------------------------- #
+
+_DEFAULT_FORMAT: Final[str] = "%(_ asctime)s | %(levelname)-8s | %(name)s | %(message)s".replace(
+    "_ ", ""
+)
+_LOGGER_NAME: Final[str] = "SiteScout"
+
+_LevelT = Union[int, str]
+
+
+# --------------------------------------------------------------------------- #
+# Helper builders                                                             #
+# --------------------------------------------------------------------------- #
+
+
+def _stdout_handler(fmt: str) -> logging.StreamHandler:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(fmt))
+    return handler
+
+
+def _file_handler(file: Path | str, fmt: str) -> RotatingFileHandler:
+    handler = RotatingFileHandler(
+        filename=str(file),
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter(fmt))
+    return handler
+
+
+# --------------------------------------------------------------------------- #
+# Public API                                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def configure(
+    *,
+    level: _LevelT = "INFO",
+    log_file: str | Path | None = None,
+    log_format: str = _DEFAULT_FORMAT,
+    replace_handlers: bool = True,
+) -> logging.Logger:
+    """(Re)configure the global project logger.
+
+    Parameters
+    ----------
+    level
+        Numeric or textual logging level (e.g. ``"DEBUG"``).
+    log_file
+        Path to a logfile. *None* → console‑only output.
+    log_format
+        Format string for :class:`logging.Formatter`.
+    replace_handlers
+        *True* – remove existing handlers; *False* – just append new one(s).
+    """
+    lg = logging.getLogger(_LOGGER_NAME)
+    lg.setLevel(level)
+
+    if replace_handlers:
+        lg.handlers.clear()
+
+    lg.addHandler(_stdout_handler(log_format))
+
+    if log_file is not None:
+        lg.addHandler(_file_handler(log_file, log_format))
+
+    lg.propagate = False
+    return lg
+
 
 def init_logging(
-    log_file: str = "site_scout.log",
-    level: str = "INFO",
-    log_format: Optional[str] = None
+    level: _LevelT = "INFO", log_file: str | Path | None = "site_scout.log"
 ) -> logging.Logger:
-    """
-    Инициализирует и возвращает настроенный логгер.
+    """Backward‑compatible alias used by legacy code."""
+    return configure(level=level, log_file=log_file, replace_handlers=True)
 
-    Параметры:
-        log_file: Путь к файлу для записи логов.
-        level:    Уровень логирования ('DEBUG', 'INFO', 'WARNING', 'ERROR').
-        log_format: Формат логов. Если не указан, используется стандартный.
 
-    Возвращает:
-        logging.Logger — экземпляр логгера с двумя хендлерами.
-    """
-    logger = logging.getLogger("SiteScout")
-    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+# --------------------------------------------------------------------------- #
+# Ready‑to‑use instance                                                       #
+# --------------------------------------------------------------------------- #
 
-    # Удаляем старые хендлеры, если они были (чтобы не дублировать вывод)
-    if logger.hasHandlers():
-        logger.handlers.clear()
+logger: logging.Logger = init_logging()
 
-    # Форматтер логов
-    if log_format is None:
-        log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-
-    formatter = logging.Formatter(fmt=log_format, datefmt="%Y-%m-%d %H:%M:%S")
-
-    # 1) Консольный хендлер
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logger.level)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
-    # 2) Файловый хендлер с ротацией
-    file_handler = RotatingFileHandler(
-        filename=log_file,
-        maxBytes=5 * 1024 * 1024,  # 5 MB
-        backupCount=3,
-        encoding="utf-8"
-    )
-    file_handler.setLevel(logger.level)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    return logger
-
-# Пример использования
-if __name__ == "__main__":
-    log = init_logging(log_file="site_scout_debug.log", level="DEBUG")
-    log.debug("DEBUG: тестовое сообщение")
-    log.info("INFO: сканирование начато")
-    log.warning("WARNING: небольшой сбой, но продолжаем")
-    log.error("ERROR: ошибка при обработке страницы")
+__all__ = ["logger", "configure", "init_logging"]

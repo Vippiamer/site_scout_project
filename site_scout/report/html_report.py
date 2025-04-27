@@ -1,25 +1,25 @@
 # ----------------------------------------------
 # site_scout/report/html_report.py
 
-"""
-Генерация HTML-отчёта для проекта SiteScout.
+"""Генерация HTML-отчёта для проекта SiteScout.
 
 Использует Jinja2 для шаблонов и базовую визуализацию
 карты сайта и списка документов.
 """
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
+
 from jinja2 import Environment, FileSystemLoader
+
 from site_scout.aggregator import ScanReport
 
 
 def render_html(
     report: ScanReport,
     template_dir: Path | str,
-    output_path: Path | str
+    output_path: Path | str,
 ) -> Path:
-    """
-    Рендерит HTML из шаблонов и сохраняет по указанному пути.
+    """Рендерит HTML из шаблонов и сохраняет по указанному пути.
 
     :param report: объект ScanReport
     :param template_dir: директория с Jinja2-шаблонами
@@ -45,22 +45,23 @@ def render_html(
     # Настройка Jinja2
     env = Environment(
         loader=FileSystemLoader(str(template_dir)),
-        autoescape=True
+        autoescape=True,
     )
-    template = env.get_template('report.html.j2')
+    template = env.get_template("report.html.j2")
 
     # Данные для шаблона
-    context: Dict[str, Any] = {
-        'pages': report.pages,
-        'documents': report.documents,
-        'hidden_resources': report.hidden_resources,
-        'locales': report.locales
+    context: dict[str, Any] = {
+        "pages": report.pages,
+        "documents": report.documents,
+        "hidden_resources": report.hidden_resources,
+        "locales": report.locales,
     }
 
     # Рендеринг и запись
     html = template.render(context)
-    output.write_text(html, encoding='utf-8')
+    output.write_text(html, encoding="utf-8")
     return output
+
 
 # ----------------------------------------------
 # Пример шаблона Jinja2: templates/report.html.j2
@@ -122,4 +123,3 @@ def render_html(
 #   </ul>
 # </body>
 # </html>
-

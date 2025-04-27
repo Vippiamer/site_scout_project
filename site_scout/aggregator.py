@@ -1,101 +1,110 @@
-# site_scout/aggregator.py
+# === FILE: site_scout_project/site_scout/aggregator.py ===
+"""Result aggregator that produces :class:`ScanReport` instances."""
+from __future__ import annotations
 
-"""
-Модуль агрегатора для проекта SiteScout.
-
-Задачи:
-- Агрегация сырых данных от crawler, parser, doc_finder, bruteforce, localization.
-- Нормализация и формирование единой структуры ScanReport.
-- Предоставление API для доступа к собранным данным.
-"""
-from dataclasses import dataclass, field
-from typing import List, Dict, Any
+import json
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, List, TypedDict
 
 
-@dataclass
+# --------------------------------------------------------------------------- #
+# Typed dictionaries for normalised items                                     #
+# --------------------------------------------------------------------------- #
+class PageInfo(TypedDict, total=False):
+    url: str
+    links: List[str]
+    meta: Dict[str, Any]
+    headings: Dict[str, Any]
+    headers: Dict[str, Any]
+
+
+class DocumentInfo(TypedDict, total=False):
+    name: str
+    url: str
+    size: int
+    mime: str
+
+
+class HiddenResourceInfo(TypedDict, total=False):
+    url: str
+    status: int | None
+    type: str
+    size: int
+
+
+# --------------------------------------------------------------------------- #
+# ScanReport dataclass                                                        #
+# --------------------------------------------------------------------------- #
+@dataclass(slots=True)
 class ScanReport:
-    """
-    Итоговый отчёт по сканированию сайта.
-    Поля:
-    - pages: список данных по каждой сканируемой странице
-    - documents: список всех найденных документов
-    - hidden_resources: список найденных скрытых ресурсов
-    - locales: группировка URL по локалям
-    - raw_results: необработанные результаты (для отладки)
-    """
-    pages: List[Dict[str, Any]] = field(default_factory=list)
-    documents: List[Dict[str, Any]] = field(default_factory=list)
-    hidden_resources: List[Dict[str, Any]] = field(default_factory=list)
+    pages: List[PageInfo] = field(default_factory=list)
+    documents: List[DocumentInfo] = field(default_factory=list)
+    hidden_resources: List[HiddenResourceInfo] = field(default_factory=list)
     locales: Dict[str, List[str]] = field(default_factory=dict)
-    raw_results: Any = None
+
+    # raw results kept for debugging but excluded from serialisers
+    raw_results: List[Dict[str, Any]] | None = None
+
+    # ------------------------------------------------------------------#
+    # serialisers used by CLI/tests                                     #
+    # ------------------------------------------------------------------#
+    def json(self, *, pretty: bool = False) -> str:
+        """Return JSON representation."""
+        return json.dumps(
+            {k: v for k, v in asdict(self).items() if k != "raw_results"},
+            ensure_ascii=False,
+            indent=2 if pretty else None,
+        )
+
+    def generate_html(self) -> str:
+        """Very simple HTML export used by CLI."""
+        return "<html><body><pre>" + self.json(pretty=True) + "</pre></body></html>"
 
 
+# --------------------------------------------------------------------------- #
+# Aggregation logic                                                           #
+# --------------------------------------------------------------------------- #
 def aggregate_results(raw_results: List[Dict[str, Any]]) -> ScanReport:
-    """
-    Преобразует список сырых результатов от воркеров в объект ScanReport.
-
-    :param raw_results: список dict, где каждый dict содержит:
-        - 'url'
-        - 'parsed': ParsedPage
-        - 'documents': list[DocumentInfo]
-        - 'hidden_paths': list[HiddenResource]
-    :return: ScanReport с нормализованными данными
-    """
-    report = ScanReport()
-    report.raw_results = raw_results
+    report = ScanReport(raw_results=raw_results)
 
     for entry in raw_results:
-        # 1) Страницы и парсинг
-        parsed = entry.get('parsed')
-        page_info = {
-            'url': entry.get('url'),
-            'links': getattr(parsed, 'links', []),
-            'meta': getattr(parsed, 'meta', {}),
-            'headings': getattr(parsed, 'headings', {}),
-            'headers': getattr(parsed, 'headers', {})
-        }
-        report.pages.append(page_info)
+        # 1) page info --------------------------------------------------- #
+        parsed = entry.get("parsed")
+        report.pages.append(
+            {
+                "url": entry.get("url", ""),
+                "links": getattr(parsed, "links", []),
+                "meta": getattr(parsed, "meta", {}),
+                "headings": getattr(parsed, "headings", {}),
+                "headers": getattr(parsed, "headers", {}),
+            }
+        )
 
-        # 2) Документы
-        docs = entry.get('documents', [])
-        for doc in docs:
-            report.documents.append({
-                'name': getattr(doc, 'name', ''),
-                'url': getattr(doc, 'url', ''),
-                'size': getattr(doc, 'size', 0),
-                'mime': getattr(doc, 'mime', '')
-            })
+        # 2) documents --------------------------------------------------- #
+        for doc in entry.get("documents", []):
+            report.documents.append(
+                {
+                    "name": getattr(doc, "name", ""),
+                    "url": getattr(doc, "url", ""),
+                    "size": getattr(doc, "size", 0),
+                    "mime": getattr(doc, "mime", ""),
+                }
+            )
 
-        # 3) Скрытые ресурсы
-        hidden = entry.get('hidden_paths', [])
-        for hr in hidden:
-            report.hidden_resources.append({
-                'url': getattr(hr, 'url', ''),
-                'status': getattr(hr, 'status', None),
-                'type': getattr(hr, 'content_type', ''),
-                'size': getattr(hr, 'size', 0)
-            })
+        # 3) hidden resources ------------------------------------------- #
+        for hr in entry.get("hidden_paths", []):
+            report.hidden_resources.append(
+                {
+                    "url": getattr(hr, "url", ""),
+                    "status": getattr(hr, "status", None),
+                    "type": getattr(hr, "content_type", ""),
+                    "size": getattr(hr, "size", 0),
+                }
+            )
 
-    # 4) Локализация: если raw_results содержит ключ 'locales'
-    # Предполагаем, что локализация собирается отдельно
-    if raw_results and isinstance(raw_results[0], dict) and 'locales' in raw_results[0]:
-        # Берём последнюю запись
-        locs = raw_results[-1].get('locales', {})
-        report.locales = {k: list(v) for k, v in locs.items()}
+    # 4) locales (expected on last record) ------------------------------ #
+    if raw_results and "locales" in raw_results[-1]:
+        locs: Dict[str, set[str]] = raw_results[-1].get("locales", {})
+        report.locales = {lang: sorted(urls) for lang, urls in locs.items()}
 
     return report
-
-# Пример использования
-if __name__ == '__main__':
-    # raw_results — результат работы engine.start_scan()
-    sample = [
-        {
-            'url': 'https://example.com',
-            'parsed': None,
-            'documents': [],
-            'hidden_paths': [],
-            'locales': {'jp': {'https://jp.example.com'}}
-        }
-    ]
-    report = aggregate_results(sample)
-    print(report)
