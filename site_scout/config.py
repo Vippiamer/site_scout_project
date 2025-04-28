@@ -1,106 +1,100 @@
-# === FILE: site_scout/config.py
-"""Configuration loading & validation for **SiteScout**.
+# site_scout/config.py
+"""Configuration loading & validation for SiteScout.
 
-The public surface consists of two symbols:
+Public API:
 
-* :class:`ScannerConfig` – pydantic model describing all runtime options;
-* :func:`load_config`     – helper that reads a YAML file (or the default
-  ``configs/default.yaml``) and returns a validated :class:`ScannerConfig`.
+* ScannerConfig – pydantic-модель с описанием всех опций;
+* load_config – читает YAML или JSON и возвращает проверенный ScannerConfig.
 
-Unit‑tests in *tests/test_config.py* rely on these exact behaviours:
-
-* Missing ``base_url`` or malformed URL ⇒ *pydantic* ``ValidationError``.
-* Non‑existent word‑list files ⇒ built‑in ``FileNotFoundError``.
-* Calling ``load_config(None)`` with no default file present ⇒
-  ``FileNotFoundError``.
+Тесты tests/test_config.py ожидают:
+* Отсутствие обязательного поля base_url или некорректный URL вызывает ValidationError;
+* Не существующие пути в параметре wordlists вызывают FileNotFoundError;
+* Вызов load_config(None) без наличия default.yaml вызывает FileNotFoundError.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
-
+from typing import Any, Dict, Union
+import json
 import yaml
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
-# --------------------------------------------------------------------------- #
-# Public API exception ‑ tests expect *pydantic* ValidationError, therefore
-# we do NOT define a custom subclass (would change isinstance‑checks).
-# --------------------------------------------------------------------------- #
 
-
+# Pydantic-модель конфигурации
 class ScannerConfig(BaseModel):
-    """Validated runtime configuration for a single scan."""
+    """Конфигурация для одного запуска сканирования."""
 
-    # Required ----------------------------------------------------------------
-    base_url: HttpUrl = Field(..., description="Root URL to start crawling from.")
+    # Обязательные параметры
+    base_url: HttpUrl = Field(..., description="Корневой URL для сканирования.")
 
-    # Optional tunables --------------------------------------------------------
-    max_depth: int = Field(3, ge=0, description="Maximum link depth to crawl.")
-    max_pages: int = Field(1000, ge=1, description="Hard page limit.")
-    timeout: float = Field(10.0, gt=0, description="Per‑request timeout (sec).")
-    user_agent: str = Field("SiteScoutBot/1.0", min_length=1)
-    rate_limit: float = Field(1.0, gt=0, description="Max RPS.")
-    retry_times: int = Field(3, ge=0, description="How many retries on 5xx.")
+    # Настройки процесса сканирования
+    max_depth: int = Field(3, ge=0, description="Максимальная глубина обхода ссылок.")
+    max_pages: int = Field(1000, ge=1, description="Жесткий лимит по числу страниц.")
+    timeout: float = Field(10.0, gt=0, description="Таймаут на один запрос (секунд).")
+    user_agent: str = Field("SiteScoutBot/1.0", min_length=1, description="Заголовок User-Agent.")
+    rate_limit: float = Field(1.0, gt=0, description="Лимит запросов в секунду.")
+    retry_times: int = Field(3, ge=0, description="Число повторных попыток при 5xx.")
 
-    # Word‑lists ---------------------------------------------------------------
-    wordlists: Dict[str, Path] = Field(..., description="Paths to word‑lists.")
-
-    # --------------------------------------------------------------------- #
-    # Model‑level validation
-    # --------------------------------------------------------------------- #
+    # Пути к файлам словарей для обхода
+    wordlists: Dict[str, Path] = Field(..., description="Пути к файлам словарей.")
 
     @model_validator(mode="after")
-    def _check_wordlists_exist(self) -> "ScannerConfig":  # noqa: D401
-        missing: list[str] = [str(p) for p in self.wordlists.values() if not Path(p).is_file()]
+    def _check_wordlists_exist(self) -> ScannerConfig:
+        missing = [str(p) for p in self.wordlists.values() if not Path(p).is_file()]
         if missing:
-            raise FileNotFoundError("Missing word‑list files: " + ", ".join(missing))
+            raise FileNotFoundError("Отсутствуют файлы словарей: " + ", ".join(missing))
         return self
 
-    # Permit ``config.json()`` w/o extra kwargs (tests call it)
     class Config:
         extra = "forbid"
         frozen = True
 
 
-# --------------------------------------------------------------------------- #
-# YAML loader helper
-# --------------------------------------------------------------------------- #
-
-
 _DEFAULT_CFG = Path("configs/default.yaml")
 
+# Вспомогательные функции для чтения конфига
 
-def _read_yaml(path: Path) -> dict[str, Any]:
+
+def _read_yaml(path: Path) -> Dict[str, Any]:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:  # pragma: no cover – unlikely in tests
-        raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Неправильный YAML в {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise TypeError(f"Top‑level YAML structure must be mapping, got {type(data).__name__}")
+        raise TypeError(f"Верхний уровень YAML должен быть mapping, получено {type(data).__name__}")
     return data
 
 
-# --------------------------------------------------------------------------- #
-# Public helper – used directly in tests
-# --------------------------------------------------------------------------- #
+def _read_json(path: Path) -> Dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) or {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Неправильный JSON в {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TypeError(f"Верхний уровень JSON должен быть mapping, получено {type(data).__name__}")
+    return data
 
 
-def load_config(path: str | Path | None) -> ScannerConfig:
-    """Read YAML *path* (or default) and return validated :class:`ScannerConfig`."""
-
+def load_config(path: Union[str, Path, None]) -> ScannerConfig:
+    """Читает YAML или JSON и возвращает проверенный объект ScannerConfig."""
     if path is None:
         if not _DEFAULT_CFG.exists():
-            raise FileNotFoundError("default.yaml not found and path not provided")
-        path = _DEFAULT_CFG
+            raise FileNotFoundError("default.yaml не найден и путь не задан")
+        path_obj = _DEFAULT_CFG
+    else:
+        path_obj = Path(path).expanduser().resolve()
+        if not path_obj.is_file():
+            raise FileNotFoundError(path_obj)
 
-    path = Path(path).expanduser().resolve()
-    if not path.is_file():
-        raise FileNotFoundError(path)
-
-    data = _read_yaml(path)
+    suffix = path_obj.suffix.lower()
+    if suffix in (".yaml", ".yml"):
+        data = _read_yaml(path_obj)
+    elif suffix == ".json":
+        data = _read_json(path_obj)
+    else:
+        raise ValueError(f"Неподдерживаемый формат конфига: {suffix}")
 
     try:
         return ScannerConfig(**data)
     except ValidationError:
-        # re‑raise as is – unit tests expect ValidationError exactly
         raise

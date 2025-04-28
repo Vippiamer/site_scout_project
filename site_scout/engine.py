@@ -1,5 +1,5 @@
-# === FILE: site_scout_project/site_scout/engine.py ===
-"""High‑level orchestration layer for **SiteScout**.
+# site_scout/engine.py
+"""High-level orchestration layer for SiteScout.
 
 The engine ties together:
 * config loading
@@ -9,60 +9,54 @@ The engine ties together:
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
+from typing import List, Any, Optional
 
-from site_scout.aggregator import ScanReport, aggregate_results
-from site_scout.config import ScannerConfig
+from site_scout.config import load_config, ScannerConfig
 from site_scout.crawler.crawler import AsyncCrawler
+from site_scout.aggregator import ScanReport, aggregate_results
 from site_scout.logger import logger
 
 __all__ = ["Engine"]
 
 
 class Engine:
-    """Convenience façade used by the CLI layer and tests."""
+    """Facade used by CLI and tests to run scans and aggregate results."""
 
-    # ------------------------------------------------------------------#
-    # static helpers                                                    #
-    # ------------------------------------------------------------------#
     @staticmethod
-    def load_config(path: Optional[str]) -> ScannerConfig:  # noqa: D401
-        """Load YAML config or obtain defaults when *path* is *None*."""
-        return ScannerConfig.load_from_file(path)
+    def load_config(path: Optional[str]) -> ScannerConfig:
+        """Load YAML/JSON config or defaults when path is None."""
+        return load_config(path)
 
-    # ------------------------------------------------------------------#
-    # construction                                                      #
-    # ------------------------------------------------------------------#
     def __init__(self, config: ScannerConfig):
         self.config = config
 
-    # ------------------------------------------------------------------#
-    # scanning                                                          #
-    # ------------------------------------------------------------------#
-    def start_scan(self) -> List[dict]:  # noqa: D401 – return raw worker results
-        """Run asynchronous crawl in a *synchronous* context and return raw data."""
+    def start_scan(self) -> ScanReport:
+        """Run asynchronous crawl with timeout and return aggregated report."""
         logger.info("Starting scan…")
-        crawler = AsyncCrawler(self.config)
 
-        async def _runner() -> List[dict]:
-            async with crawler as c:  # opens aiohttp session
-                await c.crawl()
-                # Minimal mock for tests: return list of dicts with URLs only
-                return [
-                    {"url": url, "parsed": None, "documents": [], "hidden_paths": []}
-                    for url in c.visited
-                ]
+        async def _runner() -> List[Any]:
+            # Ensure aiohttp session cleanup
+            async with AsyncCrawler(self.config) as crawler:
+                return await crawler.crawl()
 
         try:
-            return asyncio.run(asyncio.wait_for(_runner(), timeout=self.config.timeout))
-        except Exception as exc:  # pragma: no cover – surfaces to CLI/tests
+            # Apply timeout to full crawling
+            raw_results = asyncio.run(asyncio.wait_for(_runner(), timeout=self.config.timeout))
+        except asyncio.TimeoutError:
+            logger.error("Scanning did not finish within %s seconds", self.config.timeout)
+            raise
+        except Exception as exc:
             logger.error("Scanning failed: %s", exc)
             raise
 
-    # ------------------------------------------------------------------#
-    # aggregation                                                       #
-    # ------------------------------------------------------------------#
+        try:
+            # Convert raw page data into final report structure
+            return aggregate_results(raw_results)
+        except Exception as exc:
+            logger.error("Aggregation failed: %s", exc)
+            raise
+
     @staticmethod
-    def aggregate_results(raw_results: List[dict]) -> ScanReport:  # noqa: D401
-        """Aggregate raw worker results into :class:`ScanReport`."""
+    def aggregate_results(raw_results: List[Any]) -> ScanReport:
+        """Aggregate raw page data into ScanReport."""
         return aggregate_results(raw_results)
