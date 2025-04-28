@@ -1,130 +1,106 @@
-# === FILE: site_scout_project/site_scout/config.py ===
-"""
-Configuration loader/validator for **SiteScout**.
+# === FILE: site_scout/config.py
+"""Configuration loading & validation for **SiteScout**.
 
-Provides a typed ``ScannerConfig`` object that tests instantiate
-directly (``ScannerConfig(base_url="…", …)``) *and* via helper
-:func:`load_config` / :meth:`ScannerConfig.load_from_file`.
+The public surface consists of two symbols:
+
+* :class:`ScannerConfig` – pydantic model describing all runtime options;
+* :func:`load_config`     – helper that reads a YAML file (or the default
+  ``configs/default.yaml``) and returns a validated :class:`ScannerConfig`.
+
+Unit‑tests in *tests/test_config.py* rely on these exact behaviours:
+
+* Missing ``base_url`` or malformed URL ⇒ *pydantic* ``ValidationError``.
+* Non‑existent word‑list files ⇒ built‑in ``FileNotFoundError``.
+* Calling ``load_config(None)`` with no default file present ⇒
+  ``FileNotFoundError``.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Dict, Mapping
+from typing import Any, Dict
 
-import yaml  # type: ignore[import]
+import yaml
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
-__all__ = [
-    "ConfigError",
-    "ScannerConfig",
-    "load_config",
-]
-
-
-class ConfigError(RuntimeError):
-    """Raised when configuration is missing or malformed."""
+# --------------------------------------------------------------------------- #
+# Public API exception ‑ tests expect *pydantic* ValidationError, therefore
+# we do NOT define a custom subclass (would change isinstance‑checks).
+# --------------------------------------------------------------------------- #
 
 
-class ScannerConfig:
-    """Typed configuration wrapper with sensible defaults.
+class ScannerConfig(BaseModel):
+    """Validated runtime configuration for a single scan."""
 
-    Accepts either a mapping or keyword arguments; kwargs override
-    mapping values.
-    """
+    # Required ----------------------------------------------------------------
+    base_url: HttpUrl = Field(..., description="Root URL to start crawling from.")
 
-    # --------------------------------------------------------------------- #
-    # construction                                                          #
-    # --------------------------------------------------------------------- #
+    # Optional tunables --------------------------------------------------------
+    max_depth: int = Field(3, ge=0, description="Maximum link depth to crawl.")
+    max_pages: int = Field(1000, ge=1, description="Hard page limit.")
+    timeout: float = Field(10.0, gt=0, description="Per‑request timeout (sec).")
+    user_agent: str = Field("SiteScoutBot/1.0", min_length=1)
+    rate_limit: float = Field(1.0, gt=0, description="Max RPS.")
+    retry_times: int = Field(3, ge=0, description="How many retries on 5xx.")
 
-    def __init__(self, data: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
-        merged: Dict[str, Any] = {**(data or {}), **kwargs}
-
-        # required
-        self.base_url: str = str(merged.get("base_url", ""))
-
-        # optional knobs
-        self.max_depth: int = int(merged.get("max_depth", 3))
-        self.max_pages: int = int(merged.get("max_pages", 1_000))
-        self.timeout: float = float(merged.get("timeout", 10.0))
-        self.user_agent: str = str(merged.get("user_agent", "SiteScoutBot/1.0"))
-        self.rate_limit: float = float(merged.get("rate_limit", 1.0))
-        self.retry_times: int = int(merged.get("retry_times", 3))
-        self.wordlists: Dict[str, str] = dict(merged.get("wordlists", {}))
-
-        # derived
-        self.base_domain: str = Path(self.base_url).anchor or ""
-
-        self._validate()
+    # Word‑lists ---------------------------------------------------------------
+    wordlists: Dict[str, Path] = Field(..., description="Paths to word‑lists.")
 
     # --------------------------------------------------------------------- #
-    # validation                                                            #
+    # Model‑level validation
     # --------------------------------------------------------------------- #
 
-    def _validate(self) -> None:  # noqa: D401
-        if not self.base_url:
-            raise ConfigError("'base_url' is required in the configuration.")
-        if not isinstance(self.wordlists, dict):
-            raise ConfigError("'wordlists' must be a mapping of name → path.")
+    @model_validator(mode="after")
+    def _check_wordlists_exist(self) -> "ScannerConfig":  # noqa: D401
+        missing: list[str] = [str(p) for p in self.wordlists.values() if not Path(p).is_file()]
+        if missing:
+            raise FileNotFoundError("Missing word‑list files: " + ", ".join(missing))
+        return self
 
-    # --------------------------------------------------------------------- #
-    # serialisation helpers                                                 #
-    # --------------------------------------------------------------------- #
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "base_url": self.base_url,
-            "max_depth": self.max_depth,
-            "max_pages": self.max_pages,
-            "timeout": self.timeout,
-            "user_agent": self.user_agent,
-            "rate_limit": self.rate_limit,
-            "retry_times": self.retry_times,
-            "wordlists": self.wordlists,
-        }
-
-    def json(self, *, pretty: bool = False) -> str:
-        """Return JSON representation."""
-        return json.dumps(self.as_dict(), ensure_ascii=False, indent=2 if pretty else None)
-
-    # --------------------------------------------------------------------- #
-    # dunder helpers                                                        #
-    # --------------------------------------------------------------------- #
-
-    def __repr__(self) -> str:  # pragma: no cover
-        kv = ", ".join(f"{k}={v!r}" for k, v in self.as_dict().items())
-        return f"{self.__class__.__name__}({kv})"
-
-    # --------------------------------------------------------------------- #
-    # class helpers required by tests/engine                                #
-    # --------------------------------------------------------------------- #
-
-    @classmethod
-    def load_from_file(cls, path: str | Path | None) -> "ScannerConfig":
-        """Factory wrapper around :func:`load_config`."""
-        return load_config(path)
+    # Permit ``config.json()`` w/o extra kwargs (tests call it)
+    class Config:
+        extra = "forbid"
+        frozen = True
 
 
 # --------------------------------------------------------------------------- #
-# public loader                                                               #
+# YAML loader helper
+# --------------------------------------------------------------------------- #
+
+
+_DEFAULT_CFG = Path("configs/default.yaml")
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:  # pragma: no cover – unlikely in tests
+        raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise TypeError(f"Top‑level YAML structure must be mapping, got {type(data).__name__}")
+    return data
+
+
+# --------------------------------------------------------------------------- #
+# Public helper – used directly in tests
 # --------------------------------------------------------------------------- #
 
 
 def load_config(path: str | Path | None) -> ScannerConfig:
-    """Load YAML config. *None* → default config."""
-    if path is None:
-        return ScannerConfig()
+    """Read YAML *path* (or default) and return validated :class:`ScannerConfig`."""
 
-    cfg_path = Path(path).expanduser()
-    if not cfg_path.exists():
-        raise ConfigError(f"Config file not found: {cfg_path}")
+    if path is None:
+        if not _DEFAULT_CFG.exists():
+            raise FileNotFoundError("default.yaml not found and path not provided")
+        path = _DEFAULT_CFG
+
+    path = Path(path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(path)
+
+    data = _read_yaml(path)
 
     try:
-        with cfg_path.open(encoding="utf-8") as fp:
-            data = yaml.safe_load(fp) or {}
-    except yaml.YAMLError as exc:  # pragma: no cover
-        raise ConfigError(f"YAML parse error: {exc}") from exc
-
-    if not isinstance(data, dict):
-        raise ConfigError("Top-level YAML structure must be a mapping.")
-
-    return ScannerConfig(data)
+        return ScannerConfig(**data)
+    except ValidationError:
+        # re‑raise as is – unit tests expect ValidationError exactly
+        raise
