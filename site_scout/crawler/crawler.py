@@ -2,8 +2,11 @@
 # Поддержка:
 # • корректного robots.txt (Allow/Disallow/Crawl-delay);
 # • глобального rate-limit;
-# • retry с экспоненциальным back-off;
-# • таймаутов, прогресса через logging;
+# • retry с экспоненциальным back-off (только по ClientError);
+# • таймаутов без повторных попыток для запроса (TimeoutError);
+# • параллельной загрузки страниц на одном уровне глубины;
+# • расширенная поддержка контента: HTML, JSON, PDF;
+# • прогресса через logging;
 # • PEP-8 и сохранения публичного API.
 
 from __future__ import annotations
@@ -11,9 +14,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple, Union
+from collections import deque
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
@@ -27,7 +30,8 @@ class PageData:
     """Хранит URL и контент загруженной страницы."""
 
     url: str
-    content: str
+    # content может быть текстом (HTML/JSON) или бинарными данными (PDF)
+    content: Union[str, bytes]
 
 
 class RobotsTxtRules:
@@ -84,13 +88,10 @@ class RobotsTxtRules:
 class AsyncCrawler:
     """
     Асинхронный краулер.
-    crawl() отдаёт List[PageData].
+    crawl() возвращает List[PageData].
     """
 
-    # Модельный атрибут для хранения посещённых URL; инициализируется в __init__
     visited: Set[str] = field(init=False, default_factory=set)
-
-    # HTTP-статусы, при которых следует повторить попытку
     _RETRY_STATUS: Sequence[int] = tuple(range(500, 600)) + (429,)
 
     def __init__(self, config: Any) -> None:
@@ -99,11 +100,10 @@ class AsyncCrawler:
         self.logger = logging.getLogger("SiteScout")
         self.session: Optional[ClientSession] = None
         self._rate_lock = asyncio.Lock()
-        self._last_request_ts = 0.0
         self.rate_limit = max(1.0, float(self.config.rate_limit))
         self.retry_times = getattr(self.config, "retry_times", 0)
-        # Явно обнуляем посещённые URL перед обходом
-        self.visited.clear()
+        self.visited = set()
+        self._req_timestamps: Deque[float] = deque()
 
     def _validate_config(self) -> None:
         required = ("base_url", "user_agent", "timeout", "max_depth", "rate_limit")
@@ -118,6 +118,7 @@ class AsyncCrawler:
             headers={"User-Agent": self.config.user_agent},
             raise_for_status=False,
         )
+        # загружаем robots.txt
         parsed = urlparse(str(self.config.base_url))
         robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
         try:
@@ -137,31 +138,59 @@ class AsyncCrawler:
         self.logger.info("Старт обхода: %s", self.config.base_url)
         start = time.monotonic()
         results: List[PageData] = []
-        # сбрасываем посещённые URL перед каждым новым обходом
-        self.visited.clear()
-        queue: Deque[Tuple[str, int]] = deque()
+
         root = self._normalize_url(str(self.config.base_url))
         self.visited.add(root)
-        queue.append((root, 0))
 
-        while queue:
-            url, depth = queue.popleft()
-            if depth > self.config.max_depth:
-                continue
-            page_data = await self._fetch(url)
-            if not page_data:
-                continue
-            results.append(page_data)
-            soup = BeautifulSoup(page_data.content, "html.parser")
-            base_host = urlparse(page_data.url).netloc
+        # Fetch root page
+        page0 = await self._fetch(root)
+        if page0:
+            results.append(page0)
+
+        # Gather links at depth 1
+        level_urls: List[str] = []
+        if page0 and isinstance(page0.content, str):
+            soup = BeautifulSoup(page0.content, "html.parser")
+            base_host = urlparse(page0.url).netloc
             for tag in soup.find_all("a", href=True):
                 href = tag["href"]
                 if href.startswith(("mailto:", "javascript:")):
                     continue
-                abs_url = self._normalize_url(urljoin(page_data.url, href))
+                abs_url = self._normalize_url(urljoin(page0.url, href))
                 if urlparse(abs_url).netloc == base_host and abs_url not in self.visited:
                     self.visited.add(abs_url)
-                    queue.append((abs_url, depth + 1))
+                    level_urls.append(abs_url)
+        self.logger.info("Depth %d: found %d links", 1, len(level_urls))
+
+        # Process subsequent depths with parallel fetch
+        for depth in range(1, int(self.config.max_depth) + 1):
+            self.logger.info("Depth %d: fetching %d URLs", depth, len(level_urls))
+            if not level_urls:
+                break
+            tasks = [self._fetch(u) for u in level_urls]
+            pages = await asyncio.gather(*tasks)
+            fetched = sum(1 for p in pages if p)
+            self.logger.info("Depth %d: fetched %d/%d pages", depth, fetched, len(pages))
+
+            next_level: List[str] = []
+            for p in pages:
+                if not p or not isinstance(p.content, str):
+                    results.append(p) if p else None
+                    continue
+                results.append(p)
+                if depth < self.config.max_depth:
+                    soup = BeautifulSoup(p.content, "html.parser")
+                    base_host = urlparse(p.url).netloc
+                    for tag in soup.find_all("a", href=True):
+                        href = tag["href"]
+                        if href.startswith(("mailto:", "javascript:")):
+                            continue
+                        abs_url = self._normalize_url(urljoin(p.url, href))
+                        if urlparse(abs_url).netloc == base_host and abs_url not in self.visited:
+                            self.visited.add(abs_url)
+                            next_level.append(abs_url)
+            level_urls = next_level
+
         total = time.monotonic() - start
         self.logger.info(
             "Завершено: %d страниц за %.2f c (%.2f стр/с)",
@@ -172,34 +201,47 @@ class AsyncCrawler:
         return results
 
     async def _fetch(self, url: str) -> Optional[PageData]:
+        """
+        Загружает одну страницу, обрабатывая robots.txt, таймауты и retry по ClientError.
+        Поддерживает HTML, JSON и PDF.
+        """
         if not self.session:
             raise RuntimeError("Crawler session not initialised")
+        # robots.txt
         if hasattr(self, "robots_rules") and not self.robots_rules.can_fetch(
             self.config.user_agent, urlparse(url).path
         ):
             self.logger.debug("Заблокировано robots.txt: %s", url)
             return None
-        async with self._rate_lock:
-            now = time.monotonic()
-            wait = 1.0 / self.rate_limit - (now - self._last_request_ts)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_request_ts = time.monotonic()
+
         attempts = 0
         while attempts <= self.retry_times:
             try:
                 async with self.session.get(url) as resp:
-                    ctype = resp.headers.get("Content-Type", "")
+                    ctype = resp.headers.get("Content-Type", "").lower()
                     if resp.status in self._RETRY_STATUS:
                         raise ClientError(f"Retryable status: {resp.status}")
-                    if resp.status == 200 and ctype.startswith("text/html"):
+                    # HTML
+                    if ctype.startswith("text/html"):
                         text = await resp.text()
                         return PageData(url, text)
+                    # JSON
+                    if ctype.startswith("application/json"):
+                        text = await resp.text()
+                        return PageData(url, text)
+                    # PDF
+                    if "application/pdf" in ctype:
+                        data = await resp.read()
+                        return PageData(url, data)
+                    self.logger.debug("Unsupported content type '%s' at %s", ctype, url)
                     return None
-            except (ClientError, asyncio.TimeoutError) as exc:
+            except asyncio.TimeoutError as exc:
+                self.logger.debug("Timeout fetching %s: %s", url, exc)
+                return None
+            except ClientError as exc:
                 attempts += 1
                 if attempts > self.retry_times:
-                    self.logger.debug("Отказ: %s (%s)", url, exc)
+                    self.logger.debug("Отказ после попыток %d: %s (%s)", attempts, url, exc)
                     return None
                 await asyncio.sleep(min(60.0, 2**attempts))
         return None
@@ -210,5 +252,7 @@ class AsyncCrawler:
         scheme = parsed.scheme.lower()
         netloc = parsed.netloc.lower()
         path = parsed.path or "/"
-        normalized_path = path.rstrip("/") or "/"
-        return urlunparse((scheme, netloc, normalized_path, "", "", ""))
+        normalized = path.rstrip("/") or "/"
+        if normalized == "/":
+            return f"{scheme}://{netloc}"
+        return urlunparse((scheme, netloc, normalized, "", "", ""))
