@@ -77,19 +77,18 @@ class RobotsTxtRules:
 
 @dataclass
 class AsyncCrawler:
-    """Asynchronous crawler returning List of PageData. Supports async context manager."""
+    """Asynchronous crawler returning a list of PageData and supporting async context manager."""
 
     config: ScannerConfig
 
-    # Status codes that should trigger retry
     _RETRY_STATUS: Sequence[int] = tuple(range(500, 600)) + (429,)
 
     def __post_init__(self) -> None:
         self.logger = logging.getLogger("SiteScout")
-        self.session: Optional[ClientSession] = None
-        self.robots_rules: Optional[RobotsTxtRules] = None
         self._rate_lock = asyncio.Lock()
         self._req_times: Deque[float] = deque()
+        self.session: Optional[ClientSession] = None
+        self.robots_rules: Optional[RobotsTxtRules] = None
 
     async def __aenter__(self) -> AsyncCrawler:
         timeout = ClientTimeout(total=self.config.timeout)
@@ -99,7 +98,7 @@ class AsyncCrawler:
             raise_for_status=False,
         )
         # Load robots.txt
-        parsed = urlparse(str(self.config.base_url))
+        parsed = urlparse(str(self.config.base_url).rstrip("/") + "/")
         robots_url = urlunparse((parsed.scheme, parsed.netloc, "/robots.txt", "", "", ""))
         try:
             async with self.session.get(robots_url) as resp:
@@ -115,49 +114,49 @@ class AsyncCrawler:
             await self.session.close()
 
     async def crawl(self) -> List[PageData]:
-        """Breadth-first crawl up to max_depth, including root page."""
+        """Breadth-first crawl up to max_depth, ensuring root is included."""
         cfg = self.config
         self.logger.info("Starting crawl: %s", cfg.base_url)
 
-        # Normalize root URL for storage and prepare fetch URL with trailing slash
-        root_norm = self._normalize_url(str(cfg.base_url))
-        fetch_root = str(cfg.base_url).rstrip("/") + "/"
+        # Prepare root URLs
+        base_raw = str(cfg.base_url)
+        storage_root = self._normalize_url(base_raw)
+        fetch_root = base_raw.rstrip("/") + "/"
 
         results: List[PageData] = []
-        visited: Set[str] = {root_norm}
-        queue: Deque[Tuple[str, int]] = deque([(fetch_root, 0)])
+        visited: Set[str] = {storage_root}
+        queue: Deque[Tuple[str, str, int]] = deque([(fetch_root, storage_root, 0)])
 
-        # Use session opened via context manager
-        while queue:
-            url, depth = queue.popleft()
-            if depth > cfg.max_depth:
-                continue
-            page = await self._fetch(url)
-            if not page:
-                continue
-            # Assign normalized URL
-            page.url = self._normalize_url(url)
-            results.append(page)
-            # Enqueue links
-            if isinstance(page.content, str) and depth < cfg.max_depth:
-                for link in self._extract_links(page):
-                    if link not in visited:
-                        visited.add(link)
-                        queue.append((link, depth + 1))
+        async with self:
+            while queue:
+                fetch_url, store_url, depth = queue.popleft()
+                if depth > cfg.max_depth:
+                    continue
+                page = await self._fetch(fetch_url)
+                if not page:
+                    continue
+                # Set normalized URL
+                page.url = store_url
+                results.append(page)
+                # Enqueue child links
+                if isinstance(page.content, str) and depth < cfg.max_depth:
+                    for link in self._extract_links(page):
+                        norm = self._normalize_url(link)
+                        fetch = link.rstrip("/") + "/"
+                        if norm not in visited:
+                            visited.add(norm)
+                            queue.append((fetch, norm, depth + 1))
         return results
 
     async def _fetch(self, url: str) -> Optional[PageData]:
-        """Fetch a single page respecting robots rules, rate-limit, timeout, and retry."""
+        """Fetch a single page respecting robots rules, rate-limit, timeout, and retry/backoff."""
         if not self.session:
             raise RuntimeError("Session not initialized")
-        # Robots check
         path = urlparse(url).path
         if self.robots_rules and not self.robots_rules.can_fetch(self.config.user_agent, path):
             self.logger.debug("Blocked by robots: %s", url)
             return None
-        # Rate limiting
         await self._respect_rate()
-
         attempts = 0
         while True:
             try:
@@ -186,8 +185,7 @@ class AsyncCrawler:
                 if attempts > self.config.retry_times:
                     self.logger.debug("Gave up %s after %d attempts", url, attempts)
                     return None
-                backoff = min(2**attempts, 60)
-                await asyncio.sleep(backoff)
+                await asyncio.sleep(min(2**attempts, 60))
 
     async def _respect_rate(self) -> None:
         """Ensure no more than rate_limit requests per second."""
