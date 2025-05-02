@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Collection
 
 from site_scout.logger import logger
-from site_scout.utils import normalize_url, is_valid_url, PageData
+from site_scout.utils import PageData, is_valid_url, normalize_url
 
 
 def normalize_path(path: str) -> str:

@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 from pydantic import ValidationError
-
 from site_scout.config import ScannerConfig, load_config
 
 

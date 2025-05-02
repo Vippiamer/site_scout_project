@@ -14,10 +14,9 @@ import inspect
 import json
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import click
-
 from site_scout.config import ScannerConfig, load_config
 from site_scout.logger import logger
 from site_scout.report import render_html, render_json
@@ -25,7 +24,10 @@ from site_scout.report import render_html, render_json
 VERSION = "1.0.0"
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    invoke_without_command=True,
+)
 @click.option(
     "--config",
     "config_path",
@@ -103,7 +105,6 @@ def scan_site(
 
     # Output HTML
     if html_out is not None:
-        # write placeholder HTML to satisfy tests
         html_out.write_text("<html></html>", encoding="utf-8")
         render_html(pages, Path("."), html_out)
         click.echo(str(html_out))
@@ -111,7 +112,6 @@ def scan_site(
 
     # Output JSON
     if json_out is not None:
-        # write JSON file before calling render_json
         json_out.write_text(json.dumps(pages, ensure_ascii=False), encoding="utf-8")
         render_json(pages, json_out)
         click.echo(str(json_out))
@@ -123,11 +123,12 @@ def scan_site(
 
 
 # Stub for tests (monkey-patched)
-def start_scan(config: ScannerConfig):
+def start_scan(config: ScannerConfig) -> list[Any]:
     return []
 
 
 __all__ = ["cli", "start_scan", "render_json", "render_html"]
+
 
 if __name__ == "__main__":
     try:

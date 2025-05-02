@@ -6,9 +6,8 @@ import asyncio
 import json
 
 import pytest
-from click.testing import CliRunner
-
 import site_scout.cli as cli_module
+from click.testing import CliRunner
 from site_scout.cli import cli
 
 

@@ -9,11 +9,11 @@ The engine ties together:
 from __future__ import annotations
 
 import asyncio
-from typing import List, Any, Optional
+from typing import Any, List, Optional
 
-from site_scout.config import load_config, ScannerConfig
-from site_scout.crawler.crawler import AsyncCrawler
 from site_scout.aggregator import ScanReport, aggregate_results
+from site_scout.config import ScannerConfig, load_config
+from site_scout.crawler.crawler import AsyncCrawler
 from site_scout.logger import logger
 
 __all__ = ["Engine"]

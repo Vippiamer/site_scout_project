@@ -13,9 +13,10 @@ Public API:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, Union
-import json
+
 import yaml
 from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 

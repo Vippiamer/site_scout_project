@@ -7,12 +7,11 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Deque, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 from bs4 import BeautifulSoup
-
 from site_scout.config import ScannerConfig
 
 __all__ = ("PageData", "AsyncCrawler", "RobotsTxtRules")
@@ -101,7 +100,12 @@ class AsyncCrawler:
         self.robots = RobotsTxtRules(text)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[Any],
+    ) -> None:
         if self.session:
             await self.session.close()
 
@@ -193,15 +197,15 @@ class AsyncCrawler:
                     self.logger.debug("Gave up %s after %d attempts", url, attempts)
                     return None
                 await asyncio.sleep(min(2**attempts, 60))
-        # Should not reach here
-        return None
+        return None  # pragma: no cover
 
     def _extract_links(self, page: PageData) -> List[str]:
-        soup = BeautifulSoup(page.content, "html.parser")  # type: ignore
+        soup = BeautifulSoup(page.content, "html.parser")
         base_netloc = urlparse(page.url).netloc
         links: List[str] = []
         for tag in soup.find_all("a", href=True):
-            href = tag["href"].strip()
+            href_raw = cast(str, tag["href"])  # type: ignore[index]
+            href = href_raw.strip()
             if href.startswith(("mailto:", "javascript:")):
                 continue
             absolute = urljoin(page.url, href)

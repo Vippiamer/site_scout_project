@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import List
 
 import aiohttp
-
 from site_scout.utils import normalize_url, read_wordlist
 
 logger = logging.getLogger(__name__)

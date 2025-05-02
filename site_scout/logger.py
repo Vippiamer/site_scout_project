@@ -1,5 +1,5 @@
 # === FILE: site_scout_project/site_scout/logger.py ===
-"""Site‑wide logging configuration for the **SiteScout** project.
+"""Site-wide logging configuration for the **SiteScout** project.
 
 Highlights
 ----------
@@ -8,15 +8,16 @@ Highlights
 
       from site_scout.logger import logger
       logger.info("Scanning started")
-* Re‑configurable at runtime via :func:`configure`.
+* Re-configurable at runtime via :func:`configure`.
 """
 from __future__ import annotations
 
 import logging
 import sys
+from logging import Formatter
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Final, Union
+from typing import Final, TextIO, Union
 
 # --------------------------------------------------------------------------- #
 # Constants & basic types                                                     #
@@ -26,29 +27,29 @@ _DEFAULT_FORMAT: Final[str] = "%(_ asctime)s | %(levelname)-8s | %(name)s | %(me
     "_ ", ""
 )
 _LOGGER_NAME: Final[str] = "SiteScout"
-
 _LevelT = Union[int, str]
-
 
 # --------------------------------------------------------------------------- #
 # Helper builders                                                             #
 # --------------------------------------------------------------------------- #
 
 
-def _stdout_handler(fmt: str) -> logging.StreamHandler:
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(logging.Formatter(fmt))
+def _stdout_handler(fmt: str) -> logging.StreamHandler[TextIO]:
+    """Create a console (stdout) handler with the given format."""
+    handler: logging.StreamHandler[TextIO] = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(Formatter(fmt))
     return handler
 
 
 def _file_handler(file: Path | str, fmt: str) -> RotatingFileHandler:
+    """Create a rotating file handler writing to the given file with the given format."""
     handler = RotatingFileHandler(
         filename=str(file),
         maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter(fmt))
+    handler.setFormatter(Formatter(fmt))
     return handler
 
 
@@ -60,7 +61,7 @@ def _file_handler(file: Path | str, fmt: str) -> RotatingFileHandler:
 def configure(
     *,
     level: _LevelT = "INFO",
-    log_file: str | Path | None = None,
+    log_file: Path | str | None = None,
     log_format: str = _DEFAULT_FORMAT,
     replace_handlers: bool = True,
 ) -> logging.Logger:
@@ -71,7 +72,7 @@ def configure(
     level
         Numeric or textual logging level (e.g. ``"DEBUG"``).
     log_file
-        Path to a logfile. *None* → console‑only output.
+        Path to a logfile. *None* → console-only output.
     log_format
         Format string for :class:`logging.Formatter`.
     replace_handlers
@@ -93,14 +94,14 @@ def configure(
 
 
 def init_logging(
-    level: _LevelT = "INFO", log_file: str | Path | None = "site_scout.log"
+    level: _LevelT = "INFO", log_file: Path | str | None = "site_scout.log"
 ) -> logging.Logger:
-    """Backward‑compatible alias used by legacy code."""
+    """Backward-compatible alias used by legacy code."""
     return configure(level=level, log_file=log_file, replace_handlers=True)
 
 
 # --------------------------------------------------------------------------- #
-# Ready‑to‑use instance                                                       #
+# Ready-to-use instance                                                       #
 # --------------------------------------------------------------------------- #
 
 logger: logging.Logger = init_logging()

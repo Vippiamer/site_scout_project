@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -58,7 +59,7 @@ def _normalize_url(url: str) -> str:
     return urlunparse((scheme, netloc, path.rstrip("/"), "", "", ""))
 
 
-def parse_html(page) -> ParsedPage:
+def parse_html(page: Any) -> ParsedPage:
     """Parse raw HTML (string) or :class:`~site_scout.crawler.crawler.PageData`.
 
     Parameters
@@ -67,11 +68,10 @@ def parse_html(page) -> ParsedPage:
         Either a *str* (HTML markup) **or** a ``PageData`` object with
         ``url`` and ``content`` attributes.  Accepting both keeps the public
         API flexible while we refactor internals.
-
     """
     if hasattr(page, "content") and hasattr(page, "url"):
-        html: str = page.content  # type: ignore[assignment]
-        base_url: str = str(page.url)  # type: ignore[assignment]
+        html = page.content
+        base_url = str(page.url)
     else:
         html = str(page)
         base_url = ""
@@ -82,10 +82,10 @@ def parse_html(page) -> ParsedPage:
     title = title_tag.get_text(strip=True) if title_tag else ""
 
     # Extract links (absolute, deduplicated, stable ordering)
-    seen = set()
+    seen: set[str] = set()
     links: list[str] = []
     for tag in soup.find_all("a", href=True):
-        href = tag["href"].strip()
+        href = tag["href"].strip()  # type: ignore[index,union-attr]
         if href.startswith("mailto:") or href.startswith("javascript:"):
             continue
         abs_url = _normalize_url(urljoin(base_url, href))
