@@ -5,41 +5,46 @@
 base_url: "https://example.com"
 
 # 2. Максимальная глубина обхода
-#    Определяет, насколько глубоко (сколько ссылок по цепочке) сканер будет переходить.
+#    Определяет, насколько глубоко сканер будет переходить по ссылкам.
 max_depth: 2
 
 # 3. Параметры асинхронных HTTP-запросов
-#    timeout: общий таймаут на выполнение запроса (в секундах)
-#    rate_limit: максимальное число запросов в секунду
-#    user_agent: строка User-Agent, указанная в заголовках
-#    retry_times: количество повторных попыток при ошибках HTTP 5xx
 timeout: 10.0       # секунды ожидания ответа
 rate_limit: 2.0     # запросов в секунду
 user_agent: "SiteScoutBot/1.0"
 retry_times: 1      # повтор при HTTP 5xx
 
 # 4. Пути к словарям для brute-force сканирования
-#    paths: список директорий (admin, login и др.)
-#    files: список имён файлов (secret.pdf, backup.zip и др.)
 wordlists:
-  paths: "wordlists/paths.txt"   # файл со словами для директорий
-  files: "wordlists/files.txt"   # файл со словами для файлов
+  paths: "wordlists/paths.txt"
+  files: "wordlists/files.txt"
 
 # 5. Настройки локализации (для национальных сегментов)
-#    Можно определить дополнительные пути или атрибуты для каждой локали.
 localization:
   jp:
-    subdomain: "jp."           # национальный поддомен для Японии
-    path_prefix: "/jp"        # префикс пути для японской версии
-    hreflangs: ["ja", "ja-JP"]
-    accept_languages: ["ja", "ja-JP"]
+    subdomain: "jp."
+    path_prefix: "/jp"
+    hreflangs:
+      - ja
+      - ja-JP
+    accept_languages:
+      - ja
+      - ja-JP
   kr:
-    subdomain: "kr."           # национальный поддомен для Кореи
-    path_prefix: "/kr"        # префикс пути для корейской версии
-    hreflangs: ["ko", "ko-KR"]
-    accept_languages: ["ko", "ko-KR"]
+    subdomain: "kr."
+    path_prefix: "/kr"
+    hreflangs:
+      - ko
+      - ko-KR
+    accept_languages:
+      - ko
+      - ko-KR
   cn:
-    subdomain: "cn."           # национальный поддомен для Китая
-    path_prefix: "/cn"        # префикс пути для китайской версии
-    hreflangs: ["zh", "zh-CN"]
-    accept_languages: ["zh", "zh-CN"]
+    subdomain: "cn."
+    path_prefix: "/cn"
+    hreflangs:
+      - zh
+      - zh-CN
+    accept_languages:
+      - zh
+      - zh-CN

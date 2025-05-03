@@ -1,0 +1,13 @@
+// === FILE: pyrightconfig.json ===
+{
+    "include": [
+      "site_scout_project",
+      "site_scout_project/site_scout"
+    ],
+    "exclude": [
+      "**/node_modules",
+      "**/__pycache__"
+    ],
+    "reportMissingImports": false
+  }
+  

@@ -1,4 +1,4 @@
-# site_scout/config.py
+# === FILE: site_scout/config.py ===
 """Configuration loading & validation for SiteScout.
 
 Public API:
@@ -21,6 +21,13 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError, model_validator
 
 
+class LocaleConfig(BaseModel):
+    subdomain: str
+    path_prefix: str
+    hreflangs: list[str] = Field(default_factory=list)
+    accept_languages: list[str] = Field(default_factory=list)
+
+
 class ScannerConfig(BaseModel):
     """Конфигурация для одного запуска сканирования."""
 
@@ -40,6 +47,11 @@ class ScannerConfig(BaseModel):
 
     # Пути к файлам словарей для обхода
     wordlists: Dict[str, Path] = Field(..., description="Пути к файлам словарей.")
+
+    # Добавляем поле локализации
+    localization: Dict[str, LocaleConfig] = Field(
+        default_factory=dict, description="Настройки национальных сегментов."
+    )
 
     @model_validator(mode="after")
     def _check_wordlists_exist(self) -> ScannerConfig:
@@ -97,4 +109,5 @@ def load_config(path: Union[str, Path, None]) -> ScannerConfig:
     try:
         return ScannerConfig(**data)
     except ValidationError:
+        # Пробрасываем ошибку дальше, чтобы пользователь увидел детали
         raise
