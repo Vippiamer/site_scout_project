@@ -1,4 +1,5 @@
-# === FILE: site_scout_project/pyproject.toml ===
+# File: pyproject.toml
+
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -6,33 +7,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "site-scout"
 version = "1.0.0"
-description = "Asynchronous website scanner"
+description = "Async website scanner"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [
-  { name = "FastWay Logistics R&D", email = "dev@fastway.example" }
-]
+authors = [{ name = "FastWay R&D", email = "dev@fastway.example" }]
 
-# Core runtime dependencies
 dependencies = [
   "aiohttp>=3.9",
   "beautifulsoup4>=4.12",
   "click>=8.1",
   "pydantic>=2.7",
   "PyYAML>=6.0",
-  "lxml>=5.2 ; platform_system != 'Windows'",  # optional speed‑up
+  "lxml>=5.2 ; platform_system!='Windows'",
 ]
 
 [project.optional-dependencies]
-# Development / CI tooling
 dev = [
-  "pytest>=8.1",
-  "pytest-asyncio>=0.23",
-  "ruff>=0.4",
-  "black>=24.4",
-  "mypy>=1.9",
-  "pre-commit>=3.7",
+  "pytest>=8.1", "pytest-asyncio>=0.23", "ruff>=0.4",
+  "black>=24.4", "mypy>=1.9", "pre-commit>=3.7",
+  "isort", "flake8", "pydocstyle", "bandit", "radon",
 ]
 
 [project.scripts]
@@ -42,6 +36,21 @@ site-scout = "site_scout.cli:cli"
 line-length = 100
 target-version = ["py310"]
 
-[tool.ruff]
-line-length = 100
-extend-ignore = ["E501"]
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+
+[tool.pydocstyle]
+convention = "google"
+add-ignore = ["D100", "D104"]
+
+[tool.bandit]
+skips = ["B101"]
+recursive = true
+
+[tool.radon]
+# default settings

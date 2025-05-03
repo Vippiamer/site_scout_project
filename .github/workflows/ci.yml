@@ -29,11 +29,31 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           pip install -e .
-          pip install mypy pytest pytest-cov flake8
+          pip install mypy pytest pytest-cov flake8 black isort pydocstyle bandit radon
 
       - name: Lint with flake8
         run: |
           flake8 site_scout
+
+      - name: Check formatting with Black
+        run: |
+          black --check .
+
+      - name: Check import sorting with isort
+        run: |
+          isort --check-only .
+
+      - name: Check docstrings with pydocstyle
+        run: |
+          pydocstyle site_scout
+
+      - name: Security scan with Bandit
+        run: |
+          bandit -r site_scout
+
+      - name: Complexity analysis with Radon
+        run: |
+          radon cc site_scout -a
 
       - name: Type-check with mypy
         run: |
