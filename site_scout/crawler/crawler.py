@@ -1,5 +1,5 @@
 # File: site_scout/crawler/crawler.py
-"""site_scout.crawler.crawler: Асинхронный краулер с поддержкой robots.txt, retry/backoff и таймаутов."""
+"""site_scout.crawler.fetcher: HTTP-fetcher с rate limit, retry/backoff и таймаутом."""
 
 from __future__ import annotations
 

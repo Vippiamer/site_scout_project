@@ -1,5 +1,5 @@
 # File: site_scout/crawler/fetcher.py
-"""site_scout.crawler.fetcher: Модуль для HTTP-запросов с поддержкой rate limit, retry/backoff и таймаутов."""
+"""site_scout.crawler.fetcher: HTTP-fetcher с rate limit, retry/backoff и таймаутом."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from site_scout.crawler.robots import RobotsTxtRules
 
 
 class Fetcher:
-    """Обрабатывает HTTP-запросы с проверкой robots, ограничением частоты, retry/backoff и таймаутом."""
+    """Обрабатывает HTTP-fetcher с rate limit, retry/backoff и таймаутом."""
 
     def __init__(
         self,

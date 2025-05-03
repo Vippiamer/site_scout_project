@@ -1,6 +1,7 @@
 # File: site_scout/cli.py
-"""site_scout.cli: Command-line interface для SiteScout."""
-# Tests expect: --version → exit code 0; config → JSON; scan → HTML/JSON or «не завершено» on timeout.
+"""site_scout.cli: CLI для SiteScout."""
+# Tests expect: --version → exit code 0; config → JSON;
+# scan → HTML/JSON or «не завершено» on timeout.
 
 from __future__ import annotations
 

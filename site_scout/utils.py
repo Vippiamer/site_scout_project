@@ -1,5 +1,5 @@
 # File: site_scout/utils.py
-"""site_scout.utils: Утилитарные функции для обработки URL, работы со словарях путей и представления страниц."""
+"""site_scout.utils: Утилиты для обработки URL, путей и представления страниц."""
 
 from __future__ import annotations
 
