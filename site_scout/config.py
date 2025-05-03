@@ -9,7 +9,7 @@ Public API:
 Тесты tests/test_config.py ожидают:
 * Отсутствие обязательного поля base_url или некорректный URL вызывает ValidationError;
 * Не существующие пути в параметре wordlists вызывают FileNotFoundError;
-* Вызов load_config(None) без наличия default.yaml вызывает FileNotFoundError.
+* Вызов load_config(None) без наличия configs/default.yaml вызывает FileNotFoundError.
 """
 from __future__ import annotations
 
@@ -18,12 +18,21 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 import yaml
-from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    ValidationError,
+    model_validator,
+)
 
 
-# Pydantic-модель конфигурации
 class ScannerConfig(BaseModel):
     """Конфигурация для одного запуска сканирования."""
+
+    # Pydantic ConfigDigest для строгой валидации
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     # Обязательные параметры
     base_url: HttpUrl = Field(..., description="Корневой URL для сканирования.")
@@ -41,22 +50,18 @@ class ScannerConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_wordlists_exist(self) -> ScannerConfig:
+        """Проверка существования файлов словарей."""
         missing = [str(p) for p in self.wordlists.values() if not Path(p).is_file()]
         if missing:
             raise FileNotFoundError("Отсутствуют файлы словарей: " + ", ".join(missing))
         return self
 
-    class Config:
-        extra = "forbid"
-        frozen = True
-
 
 _DEFAULT_CFG = Path("configs/default.yaml")
 
-# Вспомогательные функции для чтения конфига
-
 
 def _read_yaml(path: Path) -> Dict[str, Any]:
+    """Загружает и проверяет YAML-файл, возвращает словарь."""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
@@ -67,6 +72,7 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
 
 
 def _read_json(path: Path) -> Dict[str, Any]:
+    """Загружает и проверяет JSON-файл, возвращает словарь."""
     try:
         data = json.loads(path.read_text(encoding="utf-8")) or {}
     except json.JSONDecodeError as exc:
@@ -80,7 +86,7 @@ def load_config(path: Union[str, Path, None]) -> ScannerConfig:
     """Читает YAML или JSON и возвращает проверенный объект ScannerConfig."""
     if path is None:
         if not _DEFAULT_CFG.exists():
-            raise FileNotFoundError("default.yaml не найден и путь не задан")
+            raise FileNotFoundError("configs/default.yaml не найден и путь не задан")
         path_obj = _DEFAULT_CFG
     else:
         path_obj = Path(path).expanduser().resolve()

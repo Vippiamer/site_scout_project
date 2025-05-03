@@ -1,4 +1,4 @@
-# === FILE: site_scout_project/tests/test_crawler.py ===
+# File: tests/test_crawler.py
 # Refactored test-suite for SiteScout async crawler
 from __future__ import annotations
 
@@ -37,12 +37,7 @@ STRESS_PAGES: int = 201  # keeps test quick even on CI
 
 
 def normalize_url(url: str) -> str:
-    """Normalise *url* for comparison purposes.
-
-    *   Strips query and fragment parts.
-    *   Adds a trailing slash **only** for paths that look like directories
-        (i.e. without a file-extension).
-    """
+    """Normalise *url* for comparison purposes: strip query, fragment, unify slash."""
     parts = urlsplit(url)
     path = parts.path
     if path and not path.endswith("/") and not Path(path).suffix:
@@ -51,11 +46,7 @@ def normalize_url(url: str) -> str:
 
 
 async def run_crawler(config: ScannerConfig, expected_pages: int = 100):
-    """Run the crawler inside an overall timeout that scales with *expected_pages*.
-
-    Uses :pyfunc:`asyncio.wait_for` (works on Python 3.8-3.12) instead of the
-    3.11-only context manager ``asyncio.timeout``.
-    """
+    """Run the crawler inside a timeout scaled by *expected_pages*."""
     total_timeout = max(15.0, expected_pages * 0.1)
     async with AsyncCrawler(config) as crawler:
         return await asyncio.wait_for(crawler.crawl(), timeout=total_timeout)
@@ -68,7 +59,7 @@ async def run_crawler(config: ScannerConfig, expected_pages: int = 100):
 
 @pytest.fixture()
 def empty_wordlists(tmp_path: Path) -> dict[str, Path]:
-    """Return a dict with empty wordlist files the crawler expects."""
+    """Return dict with empty wordlist files."""
     paths_file = tmp_path / "paths.txt"
     files_file = tmp_path / "files.txt"
     paths_file.touch()
@@ -77,10 +68,7 @@ def empty_wordlists(tmp_path: Path) -> dict[str, Path]:
 
 
 async def _serve_app(app: web.Application, port: int) -> AsyncIterator[str]:
-    """Lightweight context manager that starts *app* on *port*.
-
-    Ensures proper cleanup even when a test fails halfway.
-    """
+    """Start *app* on *port*, yield base URL, ensure cleanup."""
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "localhost", port)
@@ -110,7 +98,6 @@ async def test_server_allow_all(unused_tcp_port: int) -> AsyncIterator[str]:
         return web.Response(text='<a href="/page3">Page3</a>', content_type="text/html")
 
     async def handle_page3(_):
-        # Long enough to exceed per-request timeout in tests
         await asyncio.sleep(3)
         return web.Response(text="<h1>Page3 (slow)</h1>", content_type="text/html")
 
@@ -135,15 +122,11 @@ async def test_server_block_page1(unused_tcp_port: int) -> AsyncIterator[str]:
         return web.Response(text='<a href="/page1">Page1</a>', content_type="text/html")
 
     async def handle_page1(_):
-        return web.Response(
-            text="<html><body>Page1</body></html>",
-            content_type="text/html",
-        )
+        return web.Response(text="<html><body>Page1</body></html>", content_type="text/html")
 
     async def handle_robots(_):
         return web.Response(
-            text="User-agent: TestAgent/1.0\nDisallow: /page1",
-            content_type="text/plain",
+            text="User-agent: TestAgent/1.0\nDisallow: /page1", content_type="text/plain"
         )
 
     app.router.add_get("/", handle_root)
@@ -157,7 +140,6 @@ async def test_server_block_page1(unused_tcp_port: int) -> AsyncIterator[str]:
 @pytest_asyncio.fixture
 async def test_server_large(unused_tcp_port: int) -> AsyncIterator[str]:
     app = web.Application()
-
     links = "".join(f'<a href="/page{i}">Page{i}</a>' for i in range(1, STRESS_PAGES))
 
     async def handle_root(_):
@@ -199,7 +181,6 @@ async def test_basic_crawl(empty_wordlists, test_server_allow_all: str):
     assert normalize_url(test_server_allow_all) in urls
     assert normalize_url(f"{test_server_allow_all}/page1") in urls
     assert normalize_url(f"{test_server_allow_all}/page2") in urls
-    # Page3 should be skipped due to request timeout
     assert normalize_url(f"{test_server_allow_all}/page3") not in urls
     assert len(urls) == 3
 
@@ -209,7 +190,7 @@ async def test_timeout_on_deep_page(empty_wordlists, test_server_allow_all: str)
     config = ScannerConfig(
         base_url=test_server_allow_all,
         max_depth=3,
-        timeout=1.0,  # lower than 3-second sleep on /page3
+        timeout=1.0,
         user_agent="TestAgent/1.0",
         rate_limit=10.0,
         wordlists=empty_wordlists,
@@ -252,9 +233,7 @@ async def test_depth_limit(empty_wordlists, test_server_block_page1: str):
         wordlists=empty_wordlists,
     )
     pages = await run_crawler(config)
-    assert {normalize_url(p.url) for p in pages} == {
-        normalize_url(test_server_block_page1),
-    }
+    assert {normalize_url(p.url) for p in pages} == {normalize_url(test_server_block_page1)}
 
 
 @pytest.mark.asyncio()
