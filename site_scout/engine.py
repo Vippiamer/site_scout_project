@@ -1,11 +1,6 @@
-# site_scout/engine.py
-"""High-level orchestration layer for SiteScout.
+# File: site_scout/engine.py
+"""site_scout.engine: Orchestration layer для запуска сканирования и агрегации результатов."""
 
-The engine ties together:
-* config loading
-* crawler execution with timeout handling
-* results aggregation
-"""
 from __future__ import annotations
 
 import asyncio
@@ -20,27 +15,27 @@ __all__ = ["Engine"]
 
 
 class Engine:
-    """Facade used by CLI and tests to run scans and aggregate results."""
+    """Фасад для CLI и тестов: загрузка конфига, запуск сканирования и агрегация результатов."""
 
     @staticmethod
     def load_config(path: Optional[str]) -> ScannerConfig:
-        """Load YAML/JSON config or defaults when path is None."""
+        """Загружает конфиг из YAML/JSON или использует значения по умолчанию."""
         return load_config(path)
 
-    def __init__(self, config: ScannerConfig):
+    def __init__(self, config: ScannerConfig) -> None:
+        """Инициализирует Engine с заданной конфигурацией сканирования."""
         self.config = config
 
     def start_scan(self) -> ScanReport:
-        """Run asynchronous crawl with timeout and return aggregated report."""
+        """Запускает асинхронное сканирование с таймаутом и возвращает агрегированный отчёт."""
         logger.info("Starting scan…")
 
         async def _runner() -> List[Any]:
-            # Ensure aiohttp session cleanup
+            """Внутренний корутин для запуска AsynсCrawler и сбора сырых данных."""
             async with AsyncCrawler(self.config) as crawler:
                 return await crawler.crawl()
 
         try:
-            # Apply timeout to full crawling
             raw_results = asyncio.run(asyncio.wait_for(_runner(), timeout=self.config.timeout))
         except asyncio.TimeoutError:
             logger.error("Scanning did not finish within %s seconds", self.config.timeout)
@@ -50,7 +45,6 @@ class Engine:
             raise
 
         try:
-            # Convert raw page data into final report structure
             return aggregate_results(raw_results)
         except Exception as exc:
             logger.error("Aggregation failed: %s", exc)
@@ -58,5 +52,5 @@ class Engine:
 
     @staticmethod
     def aggregate_results(raw_results: List[Any]) -> ScanReport:
-        """Aggregate raw page data into ScanReport."""
+        """Агрегирует сырые результаты в объект ScanReport через site_scout.aggregator."""
         return aggregate_results(raw_results)

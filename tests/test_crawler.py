@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 import pytest_asyncio
 from aiohttp import web
+
 from site_scout.config import ScannerConfig
 from site_scout.crawler.crawler import AsyncCrawler
 

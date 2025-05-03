@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict
 
 import pytest
+
 from site_scout.config import ScannerConfig
 from site_scout.crawler.models import PageData
 

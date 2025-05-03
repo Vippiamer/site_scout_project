@@ -1,21 +1,21 @@
-# site_scout/crawler/robots.py
-"""
-Parser and checker for robots.txt rules.
-"""
+# File: site_scout/crawler/robots.py
+"""site_scout.crawler.robots: Парсер и проверка правил из robots.txt."""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
 
 class RobotsTxtRules:
-    """Parser and checker for robots.txt rules."""
+    """Парсер и проверщик правил robots.txt для различных user-agent."""
 
     def __init__(self, text: str) -> None:
+        """Инициализирует правила из содержимого robots.txt."""
         self.groups: List[Dict[str, Any]] = []
         self._parse(text)
 
     def can_fetch(self, user_agent: str, path: str) -> bool:
-        """Return True if the user_agent can fetch the given path under the rules."""
+        """Проверяет, разрешено ли указанному user-agent запрашивать путь."""
         group = self._match_group(user_agent)
         if not group:
             return True
@@ -26,7 +26,7 @@ class RobotsTxtRules:
         return allowed
 
     def _parse(self, text: str) -> None:
-        """Parse robots.txt content into user-agent groups and directives."""
+        """Разбирает содержимое robots.txt на группы user-agent и директивы."""
         current: Optional[Dict[str, Any]] = None
         for line in text.splitlines():
             line = line.split("#", 1)[0].strip()
@@ -39,13 +39,12 @@ class RobotsTxtRules:
                 current = {"agents": [val], "directives": []}
                 self.groups.append(current)
             elif key in ("allow", "disallow") and current is not None:
-                # skip empty disallow (means allow all)
                 if key == "disallow" and not val:
                     continue
                 current["directives"].append((key, val))
 
     def _match_group(self, ua: str) -> Optional[Dict[str, Any]]:
-        """Select the most specific group matching the user-agent."""
+        """Выбирает наиболее подходящую группу для данного user-agent."""
         ua = ua.lower()
         for group in self.groups:
             for agent in group.get("agents", []):

@@ -1,19 +1,21 @@
-# --------------------------------------------------------
-# site_scout/parser/sitemap_parser.py
-"""Модуль: sitemap_parser.py
+# File: site_scout/parser/sitemap_parser.py
+"""site_scout.parser.sitemap_parser: Модуль для парсинга sitemap.xml и извлечения URL."""
 
-Парсинг sitemap.xml и извлечение всех URL.
-Поддерживает базовый формат <urlset> и <sitemapindex>.
-"""
+from __future__ import annotations
+
+from typing import List
 
 from lxml import etree
 
 
-def parse_sitemap(xml_content: str) -> list[str]:
-    """Разбирает XML-контент sitemap и возвращает список URL.
+def parse_sitemap(xml_content: str) -> List[str]:
+    """Разбирает XML content sitemap и возвращает список URL из тегов <loc>.
 
-    :param xml_content: строка с содержимым sitemap.xml
-    :return: список URL из тегов <loc>
+    Args:
+        xml_content: строка с содержимым sitemap.xml.
+
+    Returns:
+        Список URL, найденных в <loc> тегах.
 
     Пример:
     ```python
@@ -27,6 +29,5 @@ def parse_sitemap(xml_content: str) -> list[str]:
     """
     parser = etree.XMLParser(ns_clean=True, recover=True)
     root = etree.fromstring(xml_content.encode("utf-8"), parser=parser)
-    # Ищем все <loc> в <url> и <sitemap>
     locs = root.findall(".//{*}loc")
     return [loc.text.strip() for loc in locs if loc.text]

@@ -1,79 +1,88 @@
-# --------------------------------------------------------
-# site_scout/parser/robots_parser.py
-"""Модуль: robots_parser.py
+# File: site_scout/parser/robots_parser.py
+"""site_scout.parser.robots_parser: Асинхронный парсер robots.txt и извлечение правил."""
 
-Парсинг robots.txt и извлечение правил.
-- Сбор секций для конкретного User-Agent и wildcard
-- Извлечение разрешённых и запрещённых путей
-- Определение crawl-delay (если задан)
-"""
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
 
 import aiohttp
 
 
 @dataclass
 class RobotsRules:
+    """Хранит правила из robots.txt для заданного User-Agent."""
+
     user_agent: str
-    allowed: list[str] = field(default_factory=list)
-    disallowed: list[str] = field(default_factory=list)
-    crawl_delay: float | None = None
+    allowed: List[str] = field(default_factory=list)
+    disallowed: List[str] = field(default_factory=list)
+    crawl_delay: Optional[float] = None
 
 
 async def parse_robots(robots_url: str, user_agent: str) -> RobotsRules:
-    """Асинхронно загружает и парсит robots.txt.
+    """Асинхронно загружает и парсит robots.txt, возвращает RobotsRules.
 
-    :param robots_url: полный URL до robots.txt
-    :param user_agent: целевой User-Agent (например, 'SiteScoutBot/1.0')
-    :return: RobotsRules с путями allow, disallow и crawl_delay
+    Args:
+        robots_url: полный URL до robots.txt.
+        user_agent: целевой User-Agent.
 
-    Пример:
-    ```python
-    from site_scout.parser.robots_parser import parse_robots
-
-    rules = asyncio.run(parse_robots(
-        "https://example.com/robots.txt",
-        "SiteScoutBot/1.0"
-    ))
-    print(rules.disallowed)
-    print(rules.allowed)
-    print(rules.crawl_delay)
-    ```
+    Returns:
+        RobotsRules с полями allowed, disallowed и crawl_delay.
     """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(robots_url) as resp:
-            text = await resp.text()
-    lines = text.splitlines()
+    text = await _fetch_robots(robots_url)
+    lines = _prepare_lines(text)
     rules = RobotsRules(user_agent=user_agent)
-    current_agents: list[str] = []
-    for raw in lines:
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        if ":" not in line:
-            continue
-        key, value = (part.strip() for part in line.split(":", 1))
-        key_low = key.lower()
-        # User-agent
-        if key_low == "user-agent":
-            # новая секция
-            current_agents = [ua.strip() for ua in value.split()]
-        # Disallow
-        elif key_low == "disallow" and any(
-            ua == "*" or ua.lower() in user_agent.lower() for ua in current_agents
-        ):
-            rules.disallowed.append(value)
-        # Allow
-        elif key_low == "allow" and any(
-            ua == "*" or ua.lower() in user_agent.lower() for ua in current_agents
-        ):
-            rules.allowed.append(value)
-        # Crawl-delay
-        elif key_low == "crawl-delay" and any(
-            ua == "*" or ua.lower() in user_agent.lower() for ua in current_agents
-        ):
-            try:
-                rules.crawl_delay = float(value)
-            except ValueError:
-                pass
+    current_agents: List[str] = []
+
+    for directive, value in lines:
+        _process_directive(directive, value, current_agents, user_agent, rules)
+
     return rules
+
+
+def _process_directive(
+    directive: str,
+    value: str,
+    current_agents: List[str],
+    user_agent: str,
+    rules: RobotsRules,
+) -> None:
+    """Обрабатывает одну директиву из robots.txt и обновляет rules/current_agents."""
+    if directive == "user-agent":
+        current_agents.clear()
+        current_agents.extend([ua.strip() for ua in value.split()])
+    elif directive in ("allow", "disallow") and _matches_agent(current_agents, user_agent):
+        if directive == "allow":
+            rules.allowed.append(value)
+        elif value:
+            rules.disallowed.append(value)
+    elif directive == "crawl-delay" and _matches_agent(current_agents, user_agent):
+        try:
+            rules.crawl_delay = float(value)
+        except ValueError:
+            pass
+
+
+async def _fetch_robots(url: str) -> str:
+    """Загружает содержимое robots.txt по URL."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            return await resp.text()
+
+
+def _prepare_lines(text: str) -> List[Tuple[str, str]]:
+    """Очищает текст от комментариев и разделяет на (директива, значение)."""
+    lines: List[Tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, val = (part.strip() for part in line.split(":", 1))
+        lines.append((key.lower(), val))
+    return lines
+
+
+def _matches_agent(agents: List[str], user_agent: str) -> bool:
+    """Проверяет, соответствует ли список агентов заданному user_agent."""
+    ua = user_agent.lower()
+    return any(agent == "*" or agent.lower() in ua for agent in agents)

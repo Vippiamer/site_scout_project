@@ -1,7 +1,6 @@
-# site_scout/crawler/link_extractor.py
-"""
-Link extraction and URL normalization utilities for SiteScout.
-"""
+# File: site_scout/crawler/link_extractor.py
+"""site_scout.crawler.link_extractor: Утилиты для извлечения ссылок и нормализации URL."""
+
 from __future__ import annotations
 
 from typing import List
@@ -9,15 +8,12 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+
 from site_scout.crawler.models import PageData
 
 
 def extract_links(page: PageData) -> List[str]:
-    """
-    Extract internal HTTP(S) links from PageData content.
-
-    Ignores mailto:, javascript:, external domains.
-    """
+    """Извлекает внутренние HTTP(S)-ссылки из содержимого страницы."""
     soup = BeautifulSoup(page.content, "html.parser")
     base_netloc = urlparse(page.url).netloc
     links: List[str] = []
@@ -38,10 +34,7 @@ def extract_links(page: PageData) -> List[str]:
 
 
 def normalize_url(url: str) -> str:
-    """
-    Normalize URL by lowercasing scheme and netloc,
-    stripping trailing slash in path, collapsing to root URL.
-    """
+    """Приводит URL к стандартному виду: нижний регистр схемы и хоста, удаление слешей."""
     parsed = urlparse(url)
     scheme = parsed.scheme.lower()
     netloc = parsed.netloc.lower()

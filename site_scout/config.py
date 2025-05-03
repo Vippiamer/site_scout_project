@@ -18,14 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Union
 
 import yaml
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    HttpUrl,
-    ValidationError,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, ValidationError, model_validator
 
 
 class ScannerConfig(BaseModel):

@@ -1,12 +1,7 @@
-# site_scout/cli.py
-"""SiteScout command-line interface exactly matching unit-test contract.
+# File: site_scout/cli.py
+"""site_scout.cli: Command-line interface для SiteScout."""
+# Tests expect: --version → exit code 0; config → JSON; scan → HTML/JSON or «не завершено» on timeout.
 
-Tests expectations (see tests/test_cli.py):
-* cli --version → exit code 0, string contains SiteScout.
-* cli config outputs JSON dictated by load_config.
-* cli scan uses start_scan (tests monkey-patch it) and calls render_json(data, path) or render_html(data, tpldir, path).
-* --scan-timeout must abort a coroutine and print Russian phrase «не завершено».
-"""
 from __future__ import annotations
 
 import asyncio
@@ -17,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import click
+
 from site_scout.config import ScannerConfig, load_config
 from site_scout.logger import logger
 from site_scout.report import render_html, render_json
@@ -35,9 +31,14 @@ VERSION = "1.0.0"
     default=None,
     help="Path to YAML/JSON config (default: configs/default.yaml)",
 )
-@click.option("--version", is_flag=True, help="Show version and exit.")
+@click.option(
+    "--version",
+    is_flag=True,
+    help="Show version and exit.",
+)
 @click.pass_context
 def cli(ctx: click.Context, config_path: Optional[Path], version: bool) -> None:
+    """Основная команда CLI SiteScout."""
     if version:
         click.echo(f"SiteScout version {VERSION}")
         ctx.exit(0)
@@ -48,6 +49,7 @@ def cli(ctx: click.Context, config_path: Optional[Path], version: bool) -> None:
 @cli.command("config", help="Print effective configuration as JSON.")
 @click.pass_context
 def show_config(ctx: click.Context) -> None:
+    """Печатает эффективную конфигурацию в формате JSON."""
     cfg_path: Optional[Path] = ctx.obj.get("CONFIG_PATH")
     cfg: ScannerConfig = load_config(str(cfg_path) if cfg_path else None)
     clean = cfg.model_dump(mode="json")
@@ -80,6 +82,7 @@ def scan_site(
     html_out: Optional[Path],
     scan_timeout: Optional[float],
 ) -> None:
+    """Запускает сканирование и выводит отчет в консоль или файл."""
     # Load config
     cfg_path: Optional[Path] = ctx.obj.get("CONFIG_PATH")
     try:
@@ -100,11 +103,12 @@ def scan_site(
         click.echo("не завершено", err=True)
         ctx.exit(1)
 
-    # Prepare data
+    # Prepare data for output
     pages = [{"url": getattr(p, "url", str(p))} for p in result]
 
     # Output HTML
     if html_out is not None:
+        # Записывает HTML-отчет в файл и выводит путь
         html_out.write_text("<html></html>", encoding="utf-8")
         render_html(pages, Path("."), html_out)
         click.echo(str(html_out))
@@ -112,6 +116,7 @@ def scan_site(
 
     # Output JSON
     if json_out is not None:
+        # Записывает JSON-отчет в файл и выводит путь
         json_out.write_text(json.dumps(pages, ensure_ascii=False), encoding="utf-8")
         render_json(pages, json_out)
         click.echo(str(json_out))
@@ -124,11 +129,11 @@ def scan_site(
 
 # Stub for tests (monkey-patched)
 def start_scan(config: ScannerConfig) -> list[Any]:
+    """Заглушка для функции сканирования, используемая в тестах."""
     return []
 
 
 __all__ = ["cli", "start_scan", "render_json", "render_html"]
-
 
 if __name__ == "__main__":
     try:

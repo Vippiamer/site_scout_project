@@ -1,7 +1,6 @@
-# === FILE: site_scout/bruteforce/__init__.py ===
+# File: site_scout/bruteforce/__init__.py
+"""site_scout.bruteforce: Модуль для перебора скрытых директорий на сайте."""
 
-"""
-Модуль bruteforce для SiteScout.
+from .brute_force import BruteForcer, HiddenResource, brute_force_hidden_dirs
 
-Содержит реализации перебора директорий и файлов на веб-сайтах.
-"""
+__all__ = ["HiddenResource", "BruteForcer", "brute_force_hidden_dirs"]
