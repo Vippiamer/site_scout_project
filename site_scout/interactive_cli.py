@@ -1,17 +1,12 @@
-# === FILE: site_scout_project/interactive_cli.py ===
+# === FILE: site_scout_project/site_scout/interactive_cli.py ===
 """
 SiteScout Interactive Runner with Wordlist Update
 """
 import argparse
-import os
 import sys
 
-# Добавляем корневую директорию проекта в PYTHONPATH для корректного разрешения пакетов
-project_root = os.path.dirname(__file__)
-sys.path.insert(0, project_root)
-
-from site_scout.config import ScannerConfig  # type: ignore[import]  # noqa: E402
-from site_scout.scanner import SiteScanner  # type: ignore[import]  # noqa: E402
+from .config import ScannerConfig  # type: ignore[import]
+from .scanner import SiteScanner  # type: ignore[import]
 
 
 def main():
