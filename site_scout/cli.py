@@ -1,8 +1,7 @@
-# File: site_scout/cli.py
-"""site_scout.cli: CLI для SiteScout."""
-# Tests expect: --version → exit code 0; config → JSON;
-# scan → HTML/JSON or «не завершено» on timeout.
-
+# === FILE: site_scout_project/site_scout/cli.py ===
+"""
+site_scout.cli: CLI для SiteScout.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -14,9 +13,10 @@ from typing import Any, Optional
 
 import click
 
-from site_scout.config import ScannerConfig, load_config
-from site_scout.logger import logger
-from site_scout.report import render_html, render_json
+from .config import ScannerConfig, load_config
+from .logger import logger
+from .report import render_html, render_json
+from .scanner import SiteScanner  # noqa: E402
 
 VERSION = "1.0.0"
 
@@ -62,6 +62,12 @@ def show_config(ctx: click.Context) -> None:
 
 @cli.command("scan", help="Run scan and output report.")
 @click.option(
+    "--url",
+    "override_url",
+    type=str,
+    help="URL сайта для сканирования (если не указан, будет запрошен интерактивно).",
+)
+@click.option(
     "--json",
     "json_out",
     type=click.Path(dir_okay=False, writable=True, path_type=Path),
@@ -79,6 +85,7 @@ def show_config(ctx: click.Context) -> None:
 @click.pass_context
 def scan_site(
     ctx: click.Context,
+    override_url: Optional[str],
     json_out: Optional[Path],
     html_out: Optional[Path],
     scan_timeout: Optional[float],
@@ -91,6 +98,22 @@ def scan_site(
     except Exception as exc:
         click.echo(f"Ошибка загрузки конфига: {exc}", err=True)
         ctx.exit(1)
+
+    # Determine base_url
+    if override_url:
+        new_url = override_url.rstrip("/")
+    else:
+        try:
+            inp = input("Введите URL сайта для сканирования: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("URL не введён, прекращение.", err=True)
+            ctx.exit(1)
+        if not inp:
+            click.echo("Ошибка: URL не может быть пустым.", err=True)
+            ctx.exit(1)
+        new_url = inp.rstrip("/")
+    # Create new config with updated base_url
+    cfg = cfg.model_copy(update={"base_url": new_url})
 
     # Start scan (may be coroutine)
     result = start_scan(cfg)
@@ -109,7 +132,6 @@ def scan_site(
 
     # Output HTML
     if html_out is not None:
-        # Записывает HTML-отчет в файл и выводит путь
         html_out.write_text("<html></html>", encoding="utf-8")
         render_html(pages, Path("."), html_out)
         click.echo(str(html_out))
@@ -117,7 +139,6 @@ def scan_site(
 
     # Output JSON
     if json_out is not None:
-        # Записывает JSON-отчет в файл и выводит путь
         json_out.write_text(json.dumps(pages, ensure_ascii=False), encoding="utf-8")
         render_json(pages, json_out)
         click.echo(str(json_out))
@@ -128,10 +149,10 @@ def scan_site(
     ctx.exit(0)
 
 
-# Stub for tests (monkey-patched)
 def start_scan(config: ScannerConfig) -> list[Any]:
-    """Заглушка для функции сканирования, используемая в тестах."""
-    return []
+    """Запускает сканирование через SiteScanner и возвращает результат."""
+    scanner = SiteScanner(config)
+    return scanner.run()
 
 
 __all__ = ["cli", "start_scan", "render_json", "render_html"]
