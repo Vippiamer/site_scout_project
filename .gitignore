@@ -1,0 +1,9 @@
+# virtual envs & egg-info
+.venv*/        /
+venv*/         /
+*.egg-info/
+# Python cache/coverage
+**/__pycache__/
+*.py[cod]
+.coverage
+htmlcov/
