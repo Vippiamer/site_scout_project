@@ -1,4 +1,4 @@
-# site_scout/cli.py
+# === FILE: site_scout/cli.py ===
 #!/usr/bin/env python3
 """
 Точка входа для запуска сканера SiteScout через командную строку.
@@ -27,7 +27,6 @@
 Пример:
   site_scout scan --config configs/default.yaml --json report.json --pretty --limit 100
 """
-
 import sys
 import asyncio
 import json
@@ -49,28 +48,29 @@ def print_error(message: str):
     sys.exit(1)
 
 @click.group(context_settings=CONTEXT_SETTINGS)
-@click.version_option(
-    __version__, '--version', '-v', message='SiteScout, version %(version)s'
-)
+@click.version_option(__version__, '--version', '-v', message='SiteScout, version %(version)s')
 @click.option(
-    '--config', '-c', 'config_path', default='configs/default.yaml',
+    '--config', '-c', 'config_path',
+    default='configs/default.yaml',
     show_default=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
     help='Путь к файлу конфигурации YAML.'
 )
 @click.option(
-    '--limit', '-l', 'limit', type=int, default=None,
+    '--limit', '-l', 'limit',
+    type=int,
+    default=None,
     help='Макс. число страниц для сканирования (override max_pages)'
 )
 @click.option(
-    '--log-level', 'log_level', default='INFO', show_default=True,
-    type=click.Choice([
-        'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'
-    ]),
+    '--log-level', 'log_level',
+    default='INFO', show_default=True,
+    type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']),
     help='Уровень логирования'
 )
 @click.option(
-    '--log-file', 'log_file', default=None,
+    '--log-file', 'log_file',
+    default=None,
     type=click.Path(writable=True, dir_okay=False, path_type=Path),
     help='Путь к файлу логов (stdout, если не указан)'
 )
@@ -89,29 +89,30 @@ def cli(ctx, config_path, limit, log_level, log_file, log_format):
         log_format=log_format
     )
     try:
-        cfg = load_config(str(config_path))
+        cfg = load_config(config_path)
     except Exception as e:
         print_error(f'Ошибка загрузки конфигурации: {e}')
-
     if limit is not None:
         cfg.max_pages = limit
-
     ctx.ensure_object(dict)
     ctx.obj['config'] = cfg
 
 @cli.command('scan', context_settings=CONTEXT_SETTINGS)
 @click.option(
-    '--json', '-j', 'json_output', default=None,
+    '--json', '-j', 'json_output',
+    default=None,
     type=click.Path(writable=True, dir_okay=False, path_type=Path),
     help='Сохранить JSON-отчёт в файл'
 )
 @click.option(
-    '--html', '-h', 'html_output', default=None,
+    '--html', '-h', 'html_output',
+    default=None,
     type=click.Path(writable=True, dir_okay=False, path_type=Path),
     help='Сохранить HTML-отчёт в файл'
 )
 @click.option(
-    '--template', '-t', 'template_dir', default='templates',
+    '--template', '-t', 'template_dir',
+    default='templates',
     show_default=True,
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help='Папка с Jinja2-шаблонами'
@@ -121,7 +122,8 @@ def cli(ctx, config_path, limit, log_level, log_file, log_format):
     help='Преформатировать JSON-вывод (отступ 2)'
 )
 @click.option(
-    '--scan-timeout', 'scan_timeout', type=int,
+    '--scan-timeout', 'scan_timeout',
+    type=float,
     default=None,
     help='Таймаут всего сканирования (секунд)'
 )
@@ -130,38 +132,30 @@ def scan(ctx, json_output, html_output, template_dir, pretty, scan_timeout):
     """Запустить сканирование и сгенерировать отчёты."""
     cfg = ctx.obj['config']
     click.echo(f'Starting scan with config: {cfg.base_url}')
-    coro = start_scan(cfg)
     try:
         if scan_timeout:
             pages = asyncio.run(
-                asyncio.wait_for(coro, timeout=scan_timeout)
+                asyncio.wait_for(start_scan(cfg), timeout=scan_timeout)
             )
         else:
-            pages = asyncio.run(coro)
+            pages = asyncio.run(start_scan(cfg))
     except asyncio.TimeoutError:
-        print_error(
-            f'Сканирование не завершено за {scan_timeout} секунд'
-        )
+        print_error(f'Сканирование не завершено за {scan_timeout} секунд')
     except Exception as e:
         print_error(f'Ошибка при сканировании: {e}')
 
-    results = [
-        {'url': p.url, 'content': p.content}
-        for p in pages
-    ]
+    results = [{'url': p.url, 'content': p.content} for p in pages]
 
+    # Если не сохраняем в файл — печатаем в stdout
     if not json_output and not html_output:
         indent = 2 if pretty else None
         try:
-            click.echo(
-                json.dumps(
-                    results, ensure_ascii=False, indent=indent
-                )
-            )
+            click.echo(json.dumps(results, ensure_ascii=False, indent=indent))
         except TypeError as e:
             print_error(f'Ошибка сериализации JSON: {e}')
         return
 
+    # JSON-отчёт
     if json_output:
         try:
             saved_json = render_json(results, json_output)
@@ -169,11 +163,10 @@ def scan(ctx, json_output, html_output, template_dir, pretty, scan_timeout):
         except Exception as e:
             print_error(f'Ошибка при сохранении JSON: {e}')
 
+    # HTML-отчёт
     if html_output:
         try:
-            saved_html = render_html(
-                results, template_dir, html_output
-            )
+            saved_html = render_html(results, template_dir, html_output)
             click.echo(f'HTML report: {saved_html}')
         except Exception as e:
             print_error(f'Ошибка при сохранении HTML: {e}')
@@ -184,6 +177,11 @@ def show_config(ctx):
     """Показать текущую конфигурацию в JSON."""
     cfg = ctx.obj['config']
     click.echo(cfg.json(indent=2, ensure_ascii=False))
+
+# expose these names at module level for test monkey-patching
+cli.start_scan = start_scan
+cli.render_json = render_json
+cli.render_html = render_html
 
 if __name__ == "__main__":
     cli()

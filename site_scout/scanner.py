@@ -1,15 +1,14 @@
 # === FILE: site_scout/scanner.py ===
 """
-Модуль-обёртка, обеспечивающий функцию запуска сканирования.
+Модуль-обёртка для функции запуска сканирования.
 """
 from typing import Any, List
-
-from site_scout.config import ScannerConfig
 from site_scout.crawler.crawler import AsyncCrawler
 
-async def start_scan(cfg: ScannerConfig) -> List[Any]:
+
+async def start_scan(cfg) -> List[Any]:
     """
-    Запускает асинхронный краулер и возвращает список страниц.
+    Запускает асинхронный краулер в контексте и возвращает список PageData.
 
     Parameters
     ----------
@@ -19,11 +18,10 @@ async def start_scan(cfg: ScannerConfig) -> List[Any]:
     Returns
     -------
     List[Any]
-        Список результатов страниц (модели Page).
+        Список результатов сканирования (модели PageData).
     """
-    crawler = AsyncCrawler(cfg)
-    pages = await crawler.run()
+    async with AsyncCrawler(cfg) as crawler:
+        pages = await crawler.crawl()
     return pages
 
-# Экспортируем для CLI и тестов
 __all__ = ["start_scan"]
